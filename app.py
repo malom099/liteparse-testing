@@ -18,15 +18,15 @@ import json
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Optional
+
+from liteparse import LiteParse
+from nicegui import run, ui
 
 from evaluate import (
     DocumentReport,
     evaluate_bboxes,
     evaluate_text_quality,
 )
-from liteparse import LiteParse
-from nicegui import run, ui
 from quality_check import (
     CoherenceReport,
     KeywordCheckReport,
@@ -77,7 +77,7 @@ def _parse_and_evaluate(
     ocr: bool,
     dpi: int,
     keywords: list[str],
-) -> tuple[DocumentReport, Optional[KeywordCheckReport], CoherenceReport]:
+) -> tuple[DocumentReport, KeywordCheckReport | None, CoherenceReport]:
     """
     Parse the document once and run all quality checks.
     Designed to be called via run.io_bound() so the UI stays responsive.
@@ -127,11 +127,7 @@ def _parse_and_evaluate(
 
 def list_samples() -> list[Path]:
     SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
-    return sorted(
-        p
-        for p in SAMPLES_DIR.iterdir()
-        if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
-    )
+    return sorted(p for p in SAMPLES_DIR.iterdir() if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS)
 
 
 # ---------------------------------------------------------------------------
@@ -145,31 +141,23 @@ def page() -> None:
     file_checkbox_map: dict[str, ui.checkbox] = {}
 
     # ── Header ────────────────────────────────────────────────────────────
-    with ui.header(elevated=True).classes(
-        "bg-blue-700 text-white items-center px-6 py-3 gap-3"
-    ):
+    with ui.header(elevated=True).classes("bg-blue-700 text-white items-center px-6 py-3 gap-3"):
         ui.icon("description").classes("text-2xl")
         ui.label("LiteParse Evaluator").classes("text-xl font-bold")
         ui.space()
-        ui.label("Text Extraction & Bounding Box Quality Testing").classes(
-            "text-sm opacity-70"
-        )
+        ui.label("Text Extraction & Bounding Box Quality Testing").classes("text-sm opacity-70")
 
     # ── Body ──────────────────────────────────────────────────────────────
     with ui.row().classes("w-full gap-0 items-start"):
         # ── LEFT SIDEBAR ──────────────────────────────────────────────────
-        with ui.column().classes(
-            "w-80 min-h-screen bg-gray-50 border-r border-gray-200 p-4 gap-4 shrink-0"
-        ):
+        with ui.column().classes("w-80 min-h-screen bg-gray-50 border-r border-gray-200 p-4 gap-4 shrink-0"):
             # --- File browser ---
             with ui.card().classes("w-full"):
                 with ui.row().classes("items-center justify-between w-full mb-1"):
-                    ui.label("Documents").classes(
-                        "font-semibold text-gray-700 text-base"
+                    ui.label("Documents").classes("font-semibold text-gray-700 text-base")
+                    ui.button(icon="refresh", on_click=lambda: _refresh()).props("flat dense round").tooltip(
+                        "Rescan samples/ folder"
                     )
-                    ui.button(icon="refresh", on_click=lambda: _refresh()).props(
-                        "flat dense round"
-                    ).tooltip("Rescan samples/ folder")
 
                 ui.separator()
 
@@ -177,12 +165,8 @@ def page() -> None:
                     file_list_col = ui.column().classes("w-full gap-0 pr-2")
 
                 with ui.row().classes("gap-2 mt-2"):
-                    ui.button("Select all", on_click=lambda: _select_all(True)).props(
-                        "flat dense size=sm outline"
-                    )
-                    ui.button("Clear", on_click=lambda: _select_all(False)).props(
-                        "flat dense size=sm outline"
-                    )
+                    ui.button("Select all", on_click=lambda: _select_all(True)).props("flat dense size=sm outline")
+                    ui.button("Clear", on_click=lambda: _select_all(False)).props("flat dense size=sm outline")
 
                 ui.label("Drop files into the samples/ folder, then refresh.").classes(
                     "text-xs text-gray-400 mt-2 leading-snug"
@@ -190,37 +174,28 @@ def page() -> None:
 
             # --- Settings ---
             with ui.card().classes("w-full"):
-                ui.label("Settings").classes(
-                    "font-semibold text-gray-700 text-base mb-2"
-                )
+                ui.label("Settings").classes("font-semibold text-gray-700 text-base mb-2")
 
-                ocr_switch = ui.switch("Enable Tesseract OCR").tooltip(
-                    "Enable OCR for scanned/image-only pages. "
-                    "eng.traineddata downloads automatically on first use."
+                ocr_switch = ui.switch("Enable Tesseract OCR", value=True).tooltip(
+                    "OCR is on by default — LiteParse only runs Tesseract on pages where "
+                    "native text extraction returns nothing, so the cost on digital PDFs is negligible. "
+                    "Disable for maximum speed on known native-text documents."
                 )
                 dpi_input = (
-                    ui.number(
-                        "Render DPI", value=150, min=72, max=600, step=50, format="%.0f"
-                    )
+                    ui.number("Render DPI", value=150, min=72, max=600, step=50, format="%.0f")
                     .classes("w-full mt-3")
-                    .tooltip(
-                        "Higher DPI improves OCR accuracy but increases parse time."
-                    )
+                    .tooltip("Higher DPI improves OCR accuracy but increases parse time.")
                 )
 
             # --- Keywords ---
             with ui.card().classes("w-full"):
-                ui.label("Expected Keywords").classes(
-                    "font-semibold text-gray-700 text-base"
+                ui.label("Expected Keywords").classes("font-semibold text-gray-700 text-base")
+                ui.label("One snippet per line — verified against every selected document.").classes(
+                    "text-xs text-gray-400 mb-2 leading-snug"
                 )
-                ui.label(
-                    "One snippet per line — verified against every selected document."
-                ).classes("text-xs text-gray-400 mb-2 leading-snug")
 
                 keywords_area = (
-                    ui.textarea(
-                        placeholder="Net Asset Value\n31 December 2025\nTotal Return"
-                    )
+                    ui.textarea(placeholder="Net Asset Value\n31 December 2025\nTotal Return")
                     .classes("w-full")
                     .props("outlined dense rows=5")
                 )
@@ -238,9 +213,9 @@ def page() -> None:
             with ui.row().classes("items-center gap-3 w-full"):
                 spinner = ui.spinner(size="sm")
                 spinner.set_visibility(False)
-                status_label = ui.label(
-                    "Select documents from the sidebar and click Run Evaluation."
-                ).classes("text-gray-500 text-sm")
+                status_label = ui.label("Select documents from the sidebar and click Run Evaluation.").classes(
+                    "text-gray-500 text-sm"
+                )
 
             results_col = ui.column().classes("w-full gap-4")
 
@@ -256,15 +231,11 @@ def page() -> None:
         files = list_samples()
         if not files:
             with file_list_col:
-                ui.label("No supported files found.").classes(
-                    "text-xs text-gray-400 italic p-2"
-                )
+                ui.label("No supported files found.").classes("text-xs text-gray-400 italic p-2")
             return
         for f in files:
             with file_list_col:
-                chk = ui.checkbox(f.name, value=f.name in selected).classes(
-                    "w-full text-sm"
-                )
+                chk = ui.checkbox(f.name, value=f.name in selected).classes("w-full text-sm")
                 chk.on_value_change(lambda e, name=f.name: _toggle(name, e.value))
                 file_checkbox_map[f.name] = chk
 
@@ -303,9 +274,7 @@ def page() -> None:
         all_results = []
         for path in paths:
             status_label.set_text(f"Parsing: {path.name} …")
-            doc_report, kw_report, co_report = await run.io_bound(
-                _parse_and_evaluate, path, ocr, dpi, keywords
-            )
+            doc_report, kw_report, co_report = await run.io_bound(_parse_and_evaluate, path, ocr, dpi, keywords)
             all_results.append((doc_report, kw_report, co_report))
 
             # Save JSON report
@@ -316,10 +285,7 @@ def page() -> None:
             _render_result_card(results_col, doc_report, kw_report, co_report)
 
         ok = sum(1 for r, _, __ in all_results if not r.error)
-        status_label.set_text(
-            f"Done — {ok} / {len(paths)} document(s) parsed OK.  "
-            f"JSON reports saved to results/"
-        )
+        status_label.set_text(f"Done — {ok} / {len(paths)} document(s) parsed OK.  JSON reports saved to results/")
         spinner.set_visibility(False)
         run_btn.props(remove="loading disable")
         ui.notify(
@@ -332,45 +298,41 @@ def page() -> None:
     def _render_result_card(
         container,
         doc: DocumentReport,
-        kw: Optional[KeywordCheckReport],
-        co: Optional[CoherenceReport],
+        kw: KeywordCheckReport | None,
+        co: CoherenceReport | None,
     ) -> None:
         icon = "error" if doc.error else "check_circle"
         subtitle_color = "text-red-500" if doc.error else "text-green-600"
-        subtitle = (
-            f"ERROR: {doc.error}"
-            if doc.error
-            else f"{doc.page_count} page(s) · {doc.parse_time_seconds:.2f}s"
-        )
+        subtitle = f"ERROR: {doc.error}" if doc.error else f"{doc.page_count} page(s) · {doc.parse_time_seconds:.2f}s"
 
-        with container:
-            with (
-                ui.expansion(doc.file_name, icon=icon)
-                .classes("w-full shadow-sm rounded-lg border border-gray-200")
-                .props("default-opened")
-            ):
-                ui.label(subtitle).classes(f"text-sm {subtitle_color} mb-3")
+        with (
+            container,
+            ui.expansion(doc.file_name, icon=icon)
+            .classes("w-full shadow-sm rounded-lg border border-gray-200")
+            .props("default-opened"),
+        ):
+            ui.label(subtitle).classes(f"text-sm {subtitle_color} mb-3")
 
-                if doc.error:
-                    return
+            if doc.error:
+                return
 
-                with ui.tabs().classes("w-full") as tabs:
-                    tab_text = ui.tab("Text Quality", icon="text_fields")
-                    tab_bbox = ui.tab("Bounding Boxes", icon="crop_free")
-                    tab_coh = ui.tab("Coherence", icon="spellcheck")
-                    if kw is not None:
-                        tab_kw = ui.tab("Keywords", icon="search")
+            with ui.tabs().classes("w-full") as tabs:
+                tab_text = ui.tab("Text Quality", icon="text_fields")
+                tab_bbox = ui.tab("Bounding Boxes", icon="crop_free")
+                tab_coh = ui.tab("Coherence", icon="spellcheck")
+                if kw is not None:
+                    tab_kw = ui.tab("Keywords", icon="search")
 
-                with ui.tab_panels(tabs, value=tab_text).classes("w-full pt-2"):
-                    with ui.tab_panel(tab_text):
-                        _panel_text_quality(doc)
-                    with ui.tab_panel(tab_bbox):
-                        _panel_bbox(doc)
-                    with ui.tab_panel(tab_coh):
-                        _panel_coherence(co)
-                    if kw is not None:
-                        with ui.tab_panel(tab_kw):
-                            _panel_keywords(kw)
+            with ui.tab_panels(tabs, value=tab_text).classes("w-full pt-2"):
+                with ui.tab_panel(tab_text):
+                    _panel_text_quality(doc)
+                with ui.tab_panel(tab_bbox):
+                    _panel_bbox(doc)
+                with ui.tab_panel(tab_coh):
+                    _panel_coherence(co)
+                if kw is not None:
+                    with ui.tab_panel(tab_kw):
+                        _panel_keywords(kw)
 
     def _metric_grid(rows: list[tuple[str, str, str]]) -> None:
         """Render a two-column label/value grid. rows = (label, value, tailwind_color)."""
@@ -412,8 +374,7 @@ def page() -> None:
         bad = tq.empty_pages + tq.near_empty_pages
         if bad:
             ui.label(
-                f"⚠ {bad} page(s) may have extraction issues — "
-                "consider enabling OCR if these are scanned pages."
+                f"⚠ {bad} page(s) may have extraction issues — consider enabling OCR if these are scanned pages."
             ).classes("text-amber-600 text-xs mt-3")
 
     def _panel_bbox(doc: DocumentReport) -> None:
@@ -450,18 +411,12 @@ def page() -> None:
         ]
         _metric_grid(rows)
 
-    def _panel_coherence(co: Optional[CoherenceReport]) -> None:
+    def _panel_coherence(co: CoherenceReport | None) -> None:
         if not co:
             ui.label("No data available.").classes("text-gray-400 text-sm")
             return
 
-        score_color = (
-            "text-green-600"
-            if co.score >= 0.75
-            else "text-amber-500"
-            if co.score >= 0.50
-            else "text-red-500"
-        )
+        score_color = "text-green-600" if co.score >= 0.75 else "text-amber-500" if co.score >= 0.50 else "text-red-500"
         rows = [
             ("Overall coherence score", f"{co.score:.0%}", score_color),
             ("Valid token ratio (words + numbers)", f"{co.real_word_ratio:.0%}", ""),
@@ -482,16 +437,8 @@ def page() -> None:
         total = kw.snippets_tested
         found = kw.snippets_found
         pct = found / total if total else 0
-        summary_color = (
-            "text-green-600"
-            if pct == 1.0
-            else "text-amber-600"
-            if pct > 0
-            else "text-red-500"
-        )
-        ui.label(f"{found} / {total} snippets found").classes(
-            f"font-semibold {summary_color} mb-3 text-base"
-        )
+        summary_color = "text-green-600" if pct == 1.0 else "text-amber-600" if pct > 0 else "text-red-500"
+        ui.label(f"{found} / {total} snippets found").classes(f"font-semibold {summary_color} mb-3 text-base")
 
         for r in kw.results:
             with ui.row().classes("items-start gap-2 mb-2"):
@@ -500,13 +447,9 @@ def page() -> None:
                 ui.icon(icon_name).classes(f"{icon_color} text-lg mt-0.5 shrink-0")
                 with ui.column().classes("gap-0 min-w-0"):
                     page_info = f"  (page {r.page_found})" if r.page_found else ""
-                    ui.label(f'"{r.snippet}"{page_info}').classes(
-                        "text-sm font-mono break-all"
-                    )
+                    ui.label(f'"{r.snippet}"{page_info}').classes("text-sm font-mono break-all")
                     if r.found and r.context:
-                        ui.label(f"…{r.context}…").classes(
-                            "text-xs text-gray-400 leading-snug break-all"
-                        )
+                        ui.label(f"…{r.context}…").classes("text-xs text-gray-400 leading-snug break-all")
 
     # ── Initial population ────────────────────────────────────────────────
     _populate_files()

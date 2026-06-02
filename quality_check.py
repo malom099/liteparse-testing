@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Shared data classes
@@ -31,8 +30,8 @@ from typing import Optional
 class KeywordResult:
     snippet: str
     found: bool
-    page_found: Optional[int]  # 1-based page number, None if not found
-    context: Optional[str]  # ~160-char excerpt around the match
+    page_found: int | None  # 1-based page number, None if not found
+    context: str | None  # ~160-char excerpt around the match
 
 
 @dataclass
@@ -96,11 +95,7 @@ def keyword_check(result, snippets: list[str]) -> KeywordCheckReport:
         idx = haystack.find(needle)
 
         if idx == -1:
-            kw_results.append(
-                KeywordResult(
-                    snippet=snippet, found=False, page_found=None, context=None
-                )
-            )
+            kw_results.append(KeywordResult(snippet=snippet, found=False, page_found=None, context=None))
             continue
 
         # Build a readable context excerpt
@@ -110,19 +105,13 @@ def keyword_check(result, snippets: list[str]) -> KeywordCheckReport:
         context = re.sub(r" {2,}", " ", raw_ctx)
 
         # Find the first page that contains the snippet
-        page_found: Optional[int] = None
+        page_found: int | None = None
         for page in pages:
             if needle in _page_text(page).lower():
-                page_found = getattr(page, "page_num", None) or getattr(
-                    page, "page", None
-                )
+                page_found = getattr(page, "page_num", None) or getattr(page, "page", None)
                 break
 
-        kw_results.append(
-            KeywordResult(
-                snippet=snippet, found=True, page_found=page_found, context=context
-            )
-        )
+        kw_results.append(KeywordResult(snippet=snippet, found=True, page_found=page_found, context=context))
 
     found_count = sum(1 for r in kw_results if r.found)
     return KeywordCheckReport(
@@ -182,7 +171,7 @@ def coherence_check(result) -> CoherenceReport:
             numeric_ratio=0.0,
             score=0.0,
             notes=[
-                "No text extracted — document may be empty or image-only (try --ocr)."
+                "No text extracted — document may be empty or image-only. Ensure OCR is enabled (it is on by default)."
             ],
         )
 
@@ -217,26 +206,16 @@ def coherence_check(result) -> CoherenceReport:
     numeric_ratio = round(numeric / n, 4)
 
     # Score: high base penalised by broken-word and garbage proportions
-    score = (
-        real_word_ratio
-        * max(0.0, 1.0 - broken_ratio * 3)
-        * max(0.0, 1.0 - garbage_ratio * 2)
-    )
+    score = real_word_ratio * max(0.0, 1.0 - broken_ratio * 3) * max(0.0, 1.0 - garbage_ratio * 2)
     score = round(min(max(score, 0.0), 1.0), 4)
 
     notes: list[str] = []
     if score < 0.50:
-        notes.append(
-            "Low coherence — possible OCR failures, complex table layouts, or charts."
-        )
+        notes.append("Low coherence — possible OCR failures, complex table layouts, or charts.")
     if broken_ratio > 0.05:
-        notes.append(
-            f"{broken_ratio:.0%} broken-word tokens — hyphenation artefacts in layout."
-        )
+        notes.append(f"{broken_ratio:.0%} broken-word tokens — hyphenation artefacts in layout.")
     if garbage_ratio > 0.05:
-        notes.append(
-            f"{garbage_ratio:.0%} garbage tokens — may include table borders or header/footer noise."
-        )
+        notes.append(f"{garbage_ratio:.0%} garbage tokens — may include table borders or header/footer noise.")
     if numeric_ratio > 0.50:
         notes.append(
             "Document is heavily numeric — expected for financial statements; score may appear lower than actual quality."

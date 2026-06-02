@@ -8,14 +8,14 @@ Usage
 -----
     python evaluate.py <file_or_directory> [options]
 
-    # Evaluate all documents in the current folder (default)
+    # Evaluate all documents in the current folder (OCR on by default)
     python evaluate.py
 
-    # Evaluate a single PDF (OCR off for speed)
+    # Evaluate a single PDF
     python evaluate.py report.pdf
 
-    # Evaluate with OCR enabled
-    python evaluate.py --ocr
+    # Disable OCR for speed on known native-text PDFs
+    python evaluate.py --no-ocr
 
     # Suppress per-file console output and only write JSON reports
     python evaluate.py --json-only --output-dir results/
@@ -23,9 +23,9 @@ Usage
 Options
 -------
     --output-dir DIR    Where to save JSON reports (default: ./results)
-    --ocr               Enable built-in Tesseract OCR (off by default)
+    --no-ocr            Disable Tesseract OCR (OCR is on by default)
     --tessdata PATH     Path to tessdata folder (overrides TESSDATA_PREFIX)
-    --dpi N             Render DPI for screenshot comparison (default: 150)
+    --dpi N             Render DPI (default: 150)
     --json-only         Skip per-file console output; only write JSON files
 """
 
@@ -38,7 +38,6 @@ import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Optional
 
 from liteparse import LiteParse
 
@@ -116,9 +115,9 @@ class DocumentReport:
     file_name: str
     parse_time_seconds: float
     page_count: int
-    text_quality: Optional[TextQualityResult] = None
-    bbox: Optional[BBoxResult] = None
-    error: Optional[str] = None
+    text_quality: TextQualityResult | None = None
+    bbox: BBoxResult | None = None
+    error: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -222,8 +221,8 @@ def evaluate_bboxes(result) -> BBoxResult:
 
 def evaluate_document(
     path: Path,
-    ocr_enabled: bool = False,
-    tessdata_path: Optional[str] = None,
+    ocr_enabled: bool = True,
+    tessdata_path: str | None = None,
     dpi: int = 150,
 ) -> DocumentReport:
     kwargs: dict = dict(
@@ -293,12 +292,8 @@ def print_document_report(report: DocumentReport) -> None:
         print(f"  Avg chars/page       : {tq.avg_chars_per_page:,.1f}")
         print(f"  Char stddev          : {tq.char_stddev:,.1f}")
         print(f"  Empty pages          : {tq.empty_pages} of {tq.page_count}")
-        print(
-            f"  Near-empty pages     : {tq.near_empty_pages}  (<50 chars, possible issue)"
-        )
-        print(
-            f"  Min / Max chars/page : {tq.min_chars_on_page:,} / {tq.max_chars_on_page:,}"
-        )
+        print(f"  Near-empty pages     : {tq.near_empty_pages}  (<50 chars, possible issue)")
+        print(f"  Min / Max chars/page : {tq.min_chars_on_page:,} / {tq.max_chars_on_page:,}")
 
     bb = report.bbox
     if bb:
@@ -306,18 +301,12 @@ def print_document_report(report: DocumentReport) -> None:
         print(f"  Total text items     : {bb.total_text_items:,}")
         print(f"  Avg items/page       : {bb.avg_items_per_page:.1f}")
         print(f"  Pages with no items  : {bb.pages_with_no_items}")
-        print(
-            f"  Zero-size items      : {bb.items_with_zero_size}  (width or height = 0)"
-        )
-        print(
-            f"  Out-of-bounds items  : {bb.items_out_of_bounds}  (exceed page dimensions)"
-        )
+        print(f"  Zero-size items      : {bb.items_with_zero_size}  (width or height = 0)")
+        print(f"  Out-of-bounds items  : {bb.items_out_of_bounds}  (exceed page dimensions)")
         cov = bb.avg_page_coverage
         cov_min = bb.min_page_coverage
         cov_max = bb.max_page_coverage
-        print(
-            f"  Page coverage        : avg={cov:.1%}  min={cov_min:.1%}  max={cov_max:.1%}"
-        )
+        print(f"  Page coverage        : avg={cov:.1%}  min={cov_min:.1%}  max={cov_max:.1%}")
 
 
 def print_summary(reports: list[DocumentReport]) -> None:
@@ -352,9 +341,7 @@ def print_summary(reports: list[DocumentReport]) -> None:
     all_near_empty = sum(r.text_quality.near_empty_pages for r in ok if r.text_quality)
     if all_empty or all_near_empty:
         print(f"\n  Total empty pages      : {all_empty}")
-        print(
-            f"  Total near-empty pages : {all_near_empty}  (possible OCR/extraction issues)"
-        )
+        print(f"  Total near-empty pages : {all_near_empty}  (possible OCR/extraction issues)")
 
     all_cov = [cov for r in ok if r.bbox for cov in r.bbox.coverage_per_page]
     if all_cov:
@@ -370,9 +357,7 @@ def print_summary(reports: list[DocumentReport]) -> None:
         zero_pct = total_zero_size / total_items
         oob_pct = total_oob / total_items
         print("\n  BBox anomalies (across all docs):")
-        print(
-            f"    Zero-size items    : {total_zero_size:,}  ({zero_pct:.2%} of all items)"
-        )
+        print(f"    Zero-size items    : {total_zero_size:,}  ({zero_pct:.2%} of all items)")
         print(f"    Out-of-bounds items: {total_oob:,}  ({oob_pct:.2%} of all items)")
 
     if failed:
@@ -389,11 +374,7 @@ def print_summary(reports: list[DocumentReport]) -> None:
 def collect_files(input_path: Path) -> list[Path]:
     if input_path.is_file():
         return [input_path]
-    return sorted(
-        p
-        for p in input_path.rglob("*")
-        if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
-    )
+    return sorted(p for p in input_path.rglob("*") if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS)
 
 
 def main() -> None:
@@ -417,14 +398,10 @@ def main() -> None:
         help="Directory to save JSON reports. Defaults to ./results/",
     )
     ap.add_argument(
-        "--ocr",
+        "--no-ocr",
         action="store_true",
         default=False,
-        help=(
-            "Enable built-in Tesseract OCR. Disabled by default for speed. "
-            "Requires eng.traineddata (downloaded automatically on first run, "
-            "or supply --tessdata for offline use)."
-        ),
+        help="Disable Tesseract OCR. OCR is on by default; use this flag for faster runs on native-text PDFs.",
     )
     ap.add_argument(
         "--tessdata",
@@ -459,7 +436,8 @@ def main() -> None:
         print(f"No supported documents found under '{input_path}'.", file=sys.stderr)
         sys.exit(1)
 
-    ocr_label = "on" if args.ocr else "off (pass --ocr to enable)"
+    ocr_enabled = not args.no_ocr
+    ocr_label = "on" if ocr_enabled else "off (--no-ocr)"
     print(f"Found {len(files)} document(s).  OCR={ocr_label}  DPI={args.dpi}")
 
     reports: list[DocumentReport] = []
@@ -467,7 +445,7 @@ def main() -> None:
         print(f"Parsing: {f.name} ... ", end="", flush=True)
         report = evaluate_document(
             f,
-            ocr_enabled=args.ocr,
+            ocr_enabled=ocr_enabled,
             tessdata_path=args.tessdata,
             dpi=args.dpi,
         )
