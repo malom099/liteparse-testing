@@ -26,6 +26,7 @@ from evaluate import (
     DocumentReport,
     evaluate_bboxes,
     evaluate_text_quality,
+    write_items_csv,
 )
 from quality_check import (
     CoherenceReport,
@@ -77,10 +78,13 @@ def _parse_and_evaluate(
     ocr: bool,
     dpi: int,
     keywords: list[str],
-) -> tuple[DocumentReport, KeywordCheckReport | None, CoherenceReport]:
+    csv_enabled: bool = True,
+    results_dir: Path | None = None,
+) -> tuple[DocumentReport, KeywordCheckReport | None, CoherenceReport, Path | None]:
     """
     Parse the document once and run all quality checks.
     Designed to be called via run.io_bound() so the UI stays responsive.
+    Returns (doc_report, kw_report, co_report, csv_path_or_None).
     """
     parser = LiteParse(ocr_enabled=ocr, dpi=dpi, quiet=True)
     t0 = time.perf_counter()
@@ -103,6 +107,7 @@ def _parse_and_evaluate(
                 numeric_ratio=0.0,
                 score=0.0,
             ),
+            None,
         )
 
     elapsed = round(time.perf_counter() - t0, 3)
@@ -117,7 +122,12 @@ def _parse_and_evaluate(
     kw_report = keyword_check(result, keywords) if keywords else None
     co_report = coherence_check(result)
 
-    return doc_report, kw_report, co_report
+    csv_out: Path | None = None
+    if csv_enabled and results_dir is not None:
+        csv_out = results_dir / (path.stem + "_items.csv")
+        write_items_csv(result, csv_out)
+
+    return doc_report, kw_report, co_report, csv_out
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +195,14 @@ def page() -> None:
                     ui.number("Render DPI", value=150, min=72, max=600, step=50, format="%.0f")
                     .classes("w-full mt-3")
                     .tooltip("Higher DPI improves OCR accuracy but increases parse time.")
+                )
+                csv_switch = (
+                    ui.switch("Export to CSV", value=True)
+                    .classes("mt-2")
+                    .tooltip(
+                        "Save a *_items.csv file alongside each JSON report. "
+                        "Opens in Excel with columns: page, item, x, y, width, height, text."
+                    )
                 )
 
             # --- Keywords ---
@@ -265,6 +283,7 @@ def page() -> None:
         keywords = _get_keywords()
         ocr = bool(ocr_switch.value)
         dpi = int(dpi_input.value or 150)
+        csv_enabled = bool(csv_switch.value)
 
         run_btn.props("loading disable")
         spinner.set_visibility(True)
@@ -274,7 +293,9 @@ def page() -> None:
         all_results = []
         for path in paths:
             status_label.set_text(f"Parsing: {path.name} …")
-            doc_report, kw_report, co_report = await run.io_bound(_parse_and_evaluate, path, ocr, dpi, keywords)
+            doc_report, kw_report, co_report, csv_path = await run.io_bound(
+                _parse_and_evaluate, path, ocr, dpi, keywords, csv_enabled, RESULTS_DIR
+            )
             all_results.append((doc_report, kw_report, co_report))
 
             # Save JSON report
@@ -282,10 +303,13 @@ def page() -> None:
             with out.open("w", encoding="utf-8") as fh:
                 json.dump(asdict(doc_report), fh, indent=2)
 
-            _render_result_card(results_col, doc_report, kw_report, co_report)
+            _render_result_card(results_col, doc_report, kw_report, co_report, csv_path)
 
         ok = sum(1 for r, _, __ in all_results if not r.error)
-        status_label.set_text(f"Done — {ok} / {len(paths)} document(s) parsed OK.  JSON reports saved to results/")
+        csv_note = "  · CSV saved to results/" if csv_enabled else ""
+        status_label.set_text(
+            f"Done — {ok} / {len(paths)} document(s) parsed OK.  JSON reports saved to results/{csv_note}"
+        )
         spinner.set_visibility(False)
         run_btn.props(remove="loading disable")
         ui.notify(
@@ -300,6 +324,7 @@ def page() -> None:
         doc: DocumentReport,
         kw: KeywordCheckReport | None,
         co: CoherenceReport | None,
+        csv_path: Path | None = None,
     ) -> None:
         icon = "error" if doc.error else "check_circle"
         subtitle_color = "text-red-500" if doc.error else "text-green-600"
@@ -315,6 +340,16 @@ def page() -> None:
 
             if doc.error:
                 return
+
+            if csv_path is not None and csv_path.exists():
+                ui.button(
+                    "Download CSV",
+                    icon="download",
+                    on_click=lambda p=csv_path: ui.download(p.read_bytes(), filename=p.name),
+                ).props("flat dense size=sm outline").classes("mb-3").tooltip(
+                    "Download the parsed text items as a CSV file — "
+                    "open in Excel to review page, x/y position, and extracted text for every item."
+                )
 
             with ui.tabs().classes("w-full") as tabs:
                 tab_text = ui.tab("Text Quality", icon="text_fields")

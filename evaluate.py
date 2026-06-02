@@ -20,10 +20,14 @@ Usage
     # Suppress per-file console output and only write JSON reports
     python evaluate.py --json-only --output-dir results/
 
+    # Skip CSV export
+    python evaluate.py --no-csv
+
 Options
 -------
     --output-dir DIR    Where to save JSON reports (default: ./results)
     --no-ocr            Disable Tesseract OCR (OCR is on by default)
+    --no-csv            Skip CSV export (CSV is written by default)
     --tessdata PATH     Path to tessdata folder (overrides TESSDATA_PREFIX)
     --dpi N             Render DPI (default: 150)
     --json-only         Skip per-file console output; only write JSON files
@@ -32,6 +36,7 @@ Options
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import statistics
 import sys
@@ -219,11 +224,48 @@ def evaluate_bboxes(result) -> BBoxResult:
     )
 
 
+# ---------------------------------------------------------------------------
+# CSV export
+# ---------------------------------------------------------------------------
+
+
+def write_items_csv(result, out_path: Path) -> None:
+    """
+    Write every parsed text item to a CSV with spatial coordinates.
+
+    Columns: page, item, x, y, width, height, text
+
+    Opens cleanly in Excel and shows the exact parsed text alongside its
+    position (in PDF points, origin top-left) for each page.  The file is
+    saved with a UTF-8 BOM so Excel auto-detects the encoding.
+    """
+    pages = getattr(result, "pages", []) or []
+    with out_path.open("w", newline="", encoding="utf-8-sig") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["page", "item", "x", "y", "width", "height", "text"])
+        for page in pages:
+            page_num = getattr(page, "page_num", None) or getattr(page, "page", "?")
+            items = getattr(page, "text_items", []) or []
+            for idx, item in enumerate(items, start=1):
+                writer.writerow(
+                    [
+                        page_num,
+                        idx,
+                        round(getattr(item, "x", 0) or 0, 2),
+                        round(getattr(item, "y", 0) or 0, 2),
+                        round(getattr(item, "width", 0) or 0, 2),
+                        round(getattr(item, "height", 0) or 0, 2),
+                        getattr(item, "text", ""),
+                    ]
+                )
+
+
 def evaluate_document(
     path: Path,
     ocr_enabled: bool = True,
     tessdata_path: str | None = None,
     dpi: int = 150,
+    csv_path: Path | None = None,
 ) -> DocumentReport:
     kwargs: dict = dict(
         ocr_enabled=ocr_enabled,
@@ -250,6 +292,9 @@ def evaluate_document(
 
     elapsed = round(time.perf_counter() - t0, 3)
     page_count = len(result.pages or [])
+
+    if csv_path is not None:
+        write_items_csv(result, csv_path)
 
     return DocumentReport(
         file_path=str(path),
@@ -404,6 +449,12 @@ def main() -> None:
         help="Disable Tesseract OCR. OCR is on by default; use this flag for faster runs on native-text PDFs.",
     )
     ap.add_argument(
+        "--no-csv",
+        action="store_true",
+        default=False,
+        help="Skip writing per-file CSV exports. CSV is written by default alongside JSON reports.",
+    )
+    ap.add_argument(
         "--tessdata",
         default=None,
         metavar="PATH",
@@ -443,11 +494,13 @@ def main() -> None:
     reports: list[DocumentReport] = []
     for f in files:
         print(f"Parsing: {f.name} ... ", end="", flush=True)
+        csv_path = None if args.no_csv else output_dir / (f.stem + "_items.csv")
         report = evaluate_document(
             f,
             ocr_enabled=ocr_enabled,
             tessdata_path=args.tessdata,
             dpi=args.dpi,
+            csv_path=csv_path,
         )
         reports.append(report)
 
@@ -470,6 +523,9 @@ def main() -> None:
         json.dump([asdict(r) for r in reports], fh, indent=2)
 
     print(f"\nJSON reports saved to: {output_dir.resolve()}/")
+    if not args.no_csv:
+        csv_count = sum(1 for r in reports if not r.error)
+        print(f"CSV exports saved to:  {output_dir.resolve()}/  ({csv_count} file(s), *_items.csv)")
 
 
 if __name__ == "__main__":

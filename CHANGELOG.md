@@ -6,6 +6,17 @@ All notable changes to LiteParse Evaluator.
 
 ---
 
+## [0.2.0] — 2026-06-02
+
+### Added
+
+- **CSV export** — `evaluate.py` now writes a `*_items.csv` file for every parsed document (alongside the JSON report) with columns `page`, `item`, `x`, `y`, `width`, `height`, `text`. Opens directly in Excel; UTF-8 BOM ensures correct encoding auto-detection.
+- **`--no-csv` flag** — pass to `evaluate.py` to suppress CSV output when not needed.
+- **"Export to CSV" toggle** in the NiceGUI app — on by default; saves `*_items.csv` to `results/` after each run.
+- **"Download CSV" button** in each result card — click to download the CSV straight from the browser.
+
+---
+
 ## [0.1.0] — 2026-06-02
 
 ### Added
