@@ -1,0 +1,41 @@
+name: CI — Lint, Type Check & Security
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+
+jobs:
+    ci:
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: actions/setup-python@v5
+              with:
+                  python-version: "3.10"
+
+            - name: Install dependencies
+              run: |
+                  pip install --upgrade pip setuptools wheel
+                  pip install -r requirements.txt -r requirements-dev.txt
+
+            - name: Ruff lint
+              run: ruff check .
+
+            - name: Ruff format check
+              run: ruff format --check .
+
+            - name: Pyright type check
+              run: pyright
+
+            - name: Security scan (bandit)
+              run: bandit -r app.py evaluate.py quality_check.py check_changelog_reminder.py -c pyproject.toml
+
+            - name: Dependency audit (pip-audit)
+              run: pip-audit
+
+            - name: Dead code check (vulture)
+              run: python -m vulture app.py evaluate.py quality_check.py --min-confidence 60

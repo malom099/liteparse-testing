@@ -1,0 +1,22 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.6
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+  - repo: local
+    hooks:
+      - id: bandit
+        name: bandit
+        entry: bandit
+        language: system
+        types: [python]
+        args: [-c, pyproject.toml]
+      - id: changelog-reminder
+        name: changelog reminder
+        entry: python check_changelog_reminder.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        verbose: true

@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# LiteParse eval — runtime outputs
+samples/*
+!samples/.gitkeep
+results/
+
+# Tesseract language data (large binary, download on demand)
+*.traineddata
+
+# OS
+.DS_Store
+Thumbs.db
