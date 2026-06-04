@@ -91,7 +91,7 @@ class TextQualityResult:
     avg_chars_per_page: float
     char_stddev: float
     empty_pages: int  # pages with 0 characters
-    near_empty_pages: int  # pages with 1–49 characters (likely extraction issue)
+    near_empty_pages: int  # pages with 1-49 characters (likely extraction issue)
     min_chars_on_page: int
     max_chars_on_page: int
     chars_per_page: list[int] = field(default_factory=list)
@@ -199,9 +199,8 @@ def evaluate_bboxes(result) -> BBoxResult:
                 zero_size += 1
                 continue
 
-            if page_w > 0 and page_h > 0:
-                if ix < 0 or iy < 0 or (ix + iw) > page_w or (iy + ih) > page_h:
-                    out_of_bounds += 1
+            if page_w > 0 and page_h > 0 and (ix < 0 or iy < 0 or (ix + iw) > page_w or (iy + ih) > page_h):
+                out_of_bounds += 1
 
             covered += iw * ih
 
@@ -260,12 +259,172 @@ def write_items_csv(result, out_path: Path) -> None:
                 )
 
 
+def write_tabular_csv(result, out_path: Path, row_tolerance: float = 4.0) -> None:
+    """
+    Write a tabular CSV that reconstructs the row/column structure of the document.
+
+    Algorithm
+    ---------
+    For each page:
+      1. Cluster text items into logical rows by grouping items whose Y centres
+         are within *row_tolerance* points of each other.
+      2. Identify column boundaries by collecting every item's X-centre across
+         all rows on the page, then merging centres that are within a gap
+         threshold (default: 20 pt).  Each merged cluster becomes one column.
+      3. Write one CSV row per logical document row, placing each item's text
+         into the column whose centre is nearest to the item's X centre.
+         Empty cells are written as blank strings.
+
+    The result opens directly in Excel with rows and columns that mirror the
+    layout of the original report — partner rows, header columns, numeric
+    values — all aligned as they appear on the page.
+
+    The file is saved with a UTF-8 BOM so Excel auto-detects the encoding.
+    """
+    COL_MERGE_GAP = 20.0  # pt — two X centres closer than this share a column
+
+    pages = getattr(result, "pages", []) or []
+    with out_path.open("w", newline="", encoding="utf-8-sig") as fh:
+        writer = csv.writer(fh)
+
+        for page in pages:
+            page_num = getattr(page, "page_num", None) or getattr(page, "page", "?")
+            items = getattr(page, "text_items", []) or []
+            if not items:
+                continue
+
+            # ── Step 1: cluster into rows ──────────────────────────────────
+            # Sort by Y then X
+            def _y_centre(item) -> float:
+                y = getattr(item, "y", 0) or 0
+                h = getattr(item, "height", 0) or 0
+                return y + h / 2
+
+            def _x_centre(item) -> float:
+                x = getattr(item, "x", 0) or 0
+                w = getattr(item, "width", 0) or 0
+                return x + w / 2
+
+            sorted_items = sorted(items, key=lambda i: (_y_centre(i), _x_centre(i)))
+
+            rows: list[list] = []
+            for item in sorted_items:
+                yc = _y_centre(item)
+                placed = False
+                for row in rows:
+                    if abs(_y_centre(row[0]) - yc) <= row_tolerance:
+                        row.append(item)
+                        placed = True
+                        break
+                if not placed:
+                    rows.append([item])
+
+            # Sort items within each row by X
+            for row in rows:
+                row.sort(key=_x_centre)
+
+            # ── Step 2: detect column boundaries ──────────────────────────
+            all_xc = sorted({round(_x_centre(i), 1) for row in rows for i in row})
+            col_centres: list[float] = []
+            for xc in all_xc:
+                if not col_centres or xc - col_centres[-1] > COL_MERGE_GAP:
+                    col_centres.append(xc)
+                else:
+                    # Merge: keep the average
+                    col_centres[-1] = (col_centres[-1] + xc) / 2
+
+            num_cols = len(col_centres)
+
+            # ── Step 3: write header separator then rows ───────────────────
+            writer.writerow([f"--- PAGE {page_num} ---"] + [""] * (num_cols - 1))
+
+            for row in rows:
+                cells = [""] * num_cols
+                for item in row:
+                    xc = _x_centre(item)
+                    # Find nearest column
+                    col_idx = min(range(num_cols), key=lambda c: abs(col_centres[c] - xc))
+                    text = getattr(item, "text", "") or ""
+                    # Append if two items land on the same column in one row
+                    cells[col_idx] = (cells[col_idx] + " " + text).strip() if cells[col_idx] else text
+                writer.writerow(cells)
+
+            writer.writerow([])  # blank row between pages
+
+
+def write_layout_txt(result, out_path: Path, grid_cols: int = 120) -> None:
+    """
+    Write a spatial text-layout file that approximates the visual arrangement
+    of the original document.
+
+    Each page is rendered as a fixed-width character grid with text items
+    placed at positions proportional to their bounding boxes.  Character-cell
+    aspect ratio (approx. 2:1 height:width) is accounted for when computing
+    the number of grid rows so vertical and horizontal spacing look natural
+    in a monospace viewer.
+
+    Opens cleanly in any plain-text editor set to a monospace font.
+    """
+    CHAR_ASPECT = 2.0  # typical monospace char height / width ratio
+    pages = getattr(result, "pages", []) or []
+    with out_path.open("w", newline="", encoding="utf-8") as fh:
+        for page in pages:
+            page_num = getattr(page, "page_num", None) or getattr(page, "page", "?")
+            page_w = getattr(page, "width", 0) or 0
+            page_h = getattr(page, "height", 0) or 0
+            items = getattr(page, "text_items", []) or []
+
+            fh.write("=" * grid_cols + "\n")
+            fh.write(f"  PAGE {page_num}\n")
+            fh.write("=" * grid_cols + "\n")
+
+            if not items or page_w <= 0 or page_h <= 0:
+                # No spatial data — fall back to raw text lines
+                for item in items:
+                    text = getattr(item, "text", "") or ""
+                    if text.strip():
+                        fh.write(text + "\n")
+                fh.write("\n")
+                continue
+
+            # Derive grid rows from page aspect ratio, corrected for char aspect
+            grid_rows = max(20, int(grid_cols * (page_h / page_w) / CHAR_ASPECT))
+
+            # Build an empty character grid
+            grid: list[list[str]] = [[" "] * grid_cols for _ in range(grid_rows)]
+
+            for item in items:
+                text = getattr(item, "text", "") or ""
+                if not text.strip():
+                    continue
+                ix = getattr(item, "x", 0) or 0
+                iy = getattr(item, "y", 0) or 0
+
+                col = int(ix / page_w * grid_cols)
+                row = int(iy / page_h * grid_rows)
+                col = max(0, min(col, grid_cols - 1))
+                row = max(0, min(row, grid_rows - 1))
+
+                for i, ch in enumerate(text):
+                    dest = col + i
+                    if dest >= grid_cols:
+                        break
+                    grid[row][dest] = ch
+
+            for grid_row in grid:
+                fh.write("".join(grid_row).rstrip() + "\n")
+
+            fh.write("\n")
+
+
 def evaluate_document(
     path: Path,
     ocr_enabled: bool = True,
     tessdata_path: str | None = None,
     dpi: int = 150,
     csv_path: Path | None = None,
+    tabular_csv_path: Path | None = None,
+    txt_path: Path | None = None,
 ) -> DocumentReport:
     kwargs: dict = dict(
         ocr_enabled=ocr_enabled,
@@ -295,6 +454,12 @@ def evaluate_document(
 
     if csv_path is not None:
         write_items_csv(result, csv_path)
+
+    if tabular_csv_path is not None:
+        write_tabular_csv(result, tabular_csv_path)
+
+    if txt_path is not None:
+        write_layout_txt(result, txt_path)
 
     return DocumentReport(
         file_path=str(path),
@@ -455,6 +620,18 @@ def main() -> None:
         help="Skip writing per-file CSV exports. CSV is written by default alongside JSON reports.",
     )
     ap.add_argument(
+        "--txt",
+        action="store_true",
+        default=False,
+        help="Write a *_layout.txt file for each document that spatially reproduces the page layout in plain text.",
+    )
+    ap.add_argument(
+        "--tabular-csv",
+        action="store_true",
+        default=False,
+        help="Write a *_tabular.csv file per document: rows and columns clustered from bounding-box positions, ready to open in Excel as a structured table.",
+    )
+    ap.add_argument(
         "--tessdata",
         default=None,
         metavar="PATH",
@@ -495,12 +672,16 @@ def main() -> None:
     for f in files:
         print(f"Parsing: {f.name} ... ", end="", flush=True)
         csv_path = None if args.no_csv else output_dir / (f.stem + "_items.csv")
+        txt_path = output_dir / (f.stem + "_layout.txt") if args.txt else None
+        tabular_csv_path = output_dir / (f.stem + "_tabular.csv") if args.tabular_csv else None
         report = evaluate_document(
             f,
             ocr_enabled=ocr_enabled,
             tessdata_path=args.tessdata,
             dpi=args.dpi,
             csv_path=csv_path,
+            tabular_csv_path=tabular_csv_path,
+            txt_path=txt_path,
         )
         reports.append(report)
 
@@ -526,6 +707,12 @@ def main() -> None:
     if not args.no_csv:
         csv_count = sum(1 for r in reports if not r.error)
         print(f"CSV exports saved to:  {output_dir.resolve()}/  ({csv_count} file(s), *_items.csv)")
+    if args.txt:
+        txt_count = sum(1 for r in reports if not r.error)
+        print(f"Layout TXT saved to:   {output_dir.resolve()}/  ({txt_count} file(s), *_layout.txt)")
+    if args.tabular_csv:
+        tab_count = sum(1 for r in reports if not r.error)
+        print(f"Tabular CSV saved to:  {output_dir.resolve()}/  ({tab_count} file(s), *_tabular.csv)")
 
 
 if __name__ == "__main__":

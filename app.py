@@ -27,6 +27,8 @@ from evaluate import (
     evaluate_bboxes,
     evaluate_text_quality,
     write_items_csv,
+    write_layout_txt,
+    write_tabular_csv,
 )
 from quality_check import (
     CoherenceReport,
@@ -79,12 +81,14 @@ def _parse_and_evaluate(
     dpi: int,
     keywords: list[str],
     csv_enabled: bool = True,
+    txt_enabled: bool = False,
+    tabular_enabled: bool = True,
     results_dir: Path | None = None,
-) -> tuple[DocumentReport, KeywordCheckReport | None, CoherenceReport, Path | None]:
+) -> tuple[DocumentReport, KeywordCheckReport | None, CoherenceReport, Path | None, Path | None, Path | None]:
     """
     Parse the document once and run all quality checks.
     Designed to be called via run.io_bound() so the UI stays responsive.
-    Returns (doc_report, kw_report, co_report, csv_path_or_None).
+    Returns (doc_report, kw_report, co_report, csv_path_or_None, txt_path_or_None, tabular_csv_path_or_None).
     """
     parser = LiteParse(ocr_enabled=ocr, dpi=dpi, quiet=True)
     t0 = time.perf_counter()
@@ -108,6 +112,8 @@ def _parse_and_evaluate(
                 score=0.0,
             ),
             None,
+            None,
+            None,
         )
 
     elapsed = round(time.perf_counter() - t0, 3)
@@ -127,7 +133,17 @@ def _parse_and_evaluate(
         csv_out = results_dir / (path.stem + "_items.csv")
         write_items_csv(result, csv_out)
 
-    return doc_report, kw_report, co_report, csv_out
+    txt_out: Path | None = None
+    if txt_enabled and results_dir is not None:
+        txt_out = results_dir / (path.stem + "_layout.txt")
+        write_layout_txt(result, txt_out)
+
+    tabular_out: Path | None = None
+    if tabular_enabled and results_dir is not None:
+        tabular_out = results_dir / (path.stem + "_tabular.csv")
+        write_tabular_csv(result, tabular_out)
+
+    return doc_report, kw_report, co_report, csv_out, txt_out, tabular_out
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +218,24 @@ def page() -> None:
                     .tooltip(
                         "Save a *_items.csv file alongside each JSON report. "
                         "Opens in Excel with columns: page, item, x, y, width, height, text."
+                    )
+                )
+                txt_switch = (
+                    ui.switch("Export Layout TXT", value=True)
+                    .classes("mt-2")
+                    .tooltip(
+                        "Save a *_layout.txt file that reproduces the visual layout of each page in plain text. "
+                        "Text items are placed at their bounding-box positions on a character grid — "
+                        "best viewed in a monospace editor."
+                    )
+                )
+                tabular_switch = (
+                    ui.switch("Export Tabular CSV (Excel)", value=True)
+                    .classes("mt-2")
+                    .tooltip(
+                        "Save a *_tabular.csv file where rows and columns are clustered from bounding-box "
+                        "positions — open directly in Excel to see the report reconstructed as a table "
+                        "with partner rows, header columns, and numeric values aligned."
                     )
                 )
 
@@ -284,6 +318,8 @@ def page() -> None:
         ocr = bool(ocr_switch.value)
         dpi = int(dpi_input.value or 150)
         csv_enabled = bool(csv_switch.value)
+        txt_enabled = bool(txt_switch.value)
+        tabular_enabled = bool(tabular_switch.value)
 
         run_btn.props("loading disable")
         spinner.set_visibility(True)
@@ -293,8 +329,8 @@ def page() -> None:
         all_results = []
         for path in paths:
             status_label.set_text(f"Parsing: {path.name} …")
-            doc_report, kw_report, co_report, csv_path = await run.io_bound(
-                _parse_and_evaluate, path, ocr, dpi, keywords, csv_enabled, RESULTS_DIR
+            doc_report, kw_report, co_report, csv_path, txt_path, tabular_path = await run.io_bound(
+                _parse_and_evaluate, path, ocr, dpi, keywords, csv_enabled, txt_enabled, tabular_enabled, RESULTS_DIR
             )
             all_results.append((doc_report, kw_report, co_report))
 
@@ -303,12 +339,19 @@ def page() -> None:
             with out.open("w", encoding="utf-8") as fh:
                 json.dump(asdict(doc_report), fh, indent=2)
 
-            _render_result_card(results_col, doc_report, kw_report, co_report, csv_path)
+            _render_result_card(results_col, doc_report, kw_report, co_report, csv_path, txt_path, tabular_path)
 
         ok = sum(1 for r, _, __ in all_results if not r.error)
-        csv_note = "  · CSV saved to results/" if csv_enabled else ""
+        extra_notes = []
+        if csv_enabled:
+            extra_notes.append("CSV")
+        if txt_enabled:
+            extra_notes.append("Layout TXT")
+        if tabular_enabled:
+            extra_notes.append("Tabular CSV")
+        exports_note = ("  · " + " & ".join(extra_notes) + " saved to results/") if extra_notes else ""
         status_label.set_text(
-            f"Done — {ok} / {len(paths)} document(s) parsed OK.  JSON reports saved to results/{csv_note}"
+            f"Done — {ok} / {len(paths)} document(s) parsed OK.  JSON reports saved to results/{exports_note}"
         )
         spinner.set_visibility(False)
         run_btn.props(remove="loading disable")
@@ -325,6 +368,8 @@ def page() -> None:
         kw: KeywordCheckReport | None,
         co: CoherenceReport | None,
         csv_path: Path | None = None,
+        txt_path: Path | None = None,
+        tabular_path: Path | None = None,
     ) -> None:
         icon = "error" if doc.error else "check_circle"
         subtitle_color = "text-red-500" if doc.error else "text-green-600"
@@ -349,6 +394,26 @@ def page() -> None:
                 ).props("flat dense size=sm outline").classes("mb-3").tooltip(
                     "Download the parsed text items as a CSV file — "
                     "open in Excel to review page, x/y position, and extracted text for every item."
+                )
+
+            if txt_path is not None and txt_path.exists():
+                ui.button(
+                    "Download Layout TXT",
+                    icon="text_snippet",
+                    on_click=lambda p=txt_path: ui.download(p.read_bytes(), filename=p.name),
+                ).props("flat dense size=sm outline").classes("mb-3").tooltip(
+                    "Download the spatial layout text file — open in a monospace editor "
+                    "to see text items placed at their bounding-box positions on a character grid."
+                )
+
+            if tabular_path is not None and tabular_path.exists():
+                ui.button(
+                    "Download Tabular CSV (Excel)",
+                    icon="table_chart",
+                    on_click=lambda p=tabular_path: ui.download(p.read_bytes(), filename=p.name),
+                ).props("flat dense size=sm outline color=green").classes("mb-3").tooltip(
+                    "Download the tabular CSV — open in Excel to see the report reconstructed "
+                    "as a table with rows and columns matching the original document layout."
                 )
 
             with ui.tabs().classes("w-full") as tabs:
@@ -382,7 +447,9 @@ def page() -> None:
             ui.label("No data available.").classes("text-gray-400 text-sm")
             return
 
-        issue_color = lambda n, threshold: "text-red-500" if n > threshold else ""
+        def issue_color(n, threshold):
+            return "text-red-500" if n > threshold else ""
+
         rows = [
             ("Total characters", f"{tq.total_chars:,}", ""),
             ("Total words", f"{tq.total_words:,}", ""),
@@ -418,7 +485,9 @@ def page() -> None:
             ui.label("No data available.").classes("text-gray-400 text-sm")
             return
 
-        warn = lambda n: "text-amber-600" if n > 0 else ""
+        def warn(n):
+            return "text-amber-600" if n > 0 else ""
+
         rows = [
             ("Total text items", f"{bb.total_text_items:,}", ""),
             ("Avg items / page", f"{bb.avg_items_per_page:.1f}", ""),
