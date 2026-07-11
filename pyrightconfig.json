@@ -1,8 +1,0 @@
-﻿{
-  "reportMissingImports": "warning",
-  "pythonVersion": "3.11",
-  "exclude": [
-    ".venv",
-    "**/__pycache__"
-  ]
-}

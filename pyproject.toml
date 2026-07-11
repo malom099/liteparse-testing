@@ -2,7 +2,7 @@
 name = "liteparse-eval"
 version = "0.1.0"
 description = "LiteParse document parsing quality evaluator — NiceGUI browser app and CLI batch tool"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [{ name = "Ocean Capital Investments" }]
 license = { text = "Proprietary" }
 
@@ -10,7 +10,7 @@ license = { text = "Proprietary" }
 # Ruff — linter & formatter
 # ---------------------------------------------------------------------------
 [tool.ruff]
-target-version = "py310"
+target-version = "py312"
 line-length = 120
 extend-exclude = [
     ".venv",
@@ -46,7 +46,7 @@ indent-style = "space"
 # Pyright — static type checker
 # ---------------------------------------------------------------------------
 [tool.pyright]
-pythonVersion = "3.10"
+pythonVersion = "3.12"
 typeCheckingMode = "basic"
 venvPath = "."
 venv = ".venv"
@@ -73,3 +73,11 @@ skips = ["B101", "B404", "B603", "B607"]
 [tool.vulture]
 min_confidence = 60
 paths = ["app.py", "evaluate.py", "quality_check.py"]
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "--cov=app --cov=evaluate --cov=quality_check --cov-report=term-missing"

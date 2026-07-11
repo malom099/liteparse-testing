@@ -288,7 +288,7 @@ def page() -> None:
         for f in files:
             with file_list_col:
                 chk = ui.checkbox(f.name, value=f.name in selected).classes("w-full text-sm")
-                chk.on_value_change(lambda e, name=f.name: _toggle(name, e.value))
+                chk.on_value_change(lambda e, name=f.name: _toggle(name, e.value))  # pyright: ignore[reportArgumentType]
                 file_checkbox_map[f.name] = chk
 
     def _toggle(name: str, checked: bool) -> None:
@@ -329,7 +329,7 @@ def page() -> None:
         all_results = []
         for path in paths:
             status_label.set_text(f"Parsing: {path.name} …")
-            doc_report, kw_report, co_report, csv_path, txt_path, tabular_path = await run.io_bound(
+            doc_report, kw_report, co_report, csv_path, txt_path, tabular_path = await run.io_bound(  # pyright: ignore[reportGeneralTypeIssues]
                 _parse_and_evaluate, path, ocr, dpi, keywords, csv_enabled, txt_enabled, tabular_enabled, RESULTS_DIR
             )
             all_results.append((doc_report, kw_report, co_report))
@@ -390,7 +390,7 @@ def page() -> None:
                 ui.button(
                     "Download CSV",
                     icon="download",
-                    on_click=lambda p=csv_path: ui.download(p.read_bytes(), filename=p.name),
+                    on_click=lambda p=csv_path: ui.download(p.read_bytes(), filename=p.name),  # pyright: ignore[reportAttributeAccessIssue]
                 ).props("flat dense size=sm outline").classes("mb-3").tooltip(
                     "Download the parsed text items as a CSV file — "
                     "open in Excel to review page, x/y position, and extracted text for every item."
@@ -400,7 +400,7 @@ def page() -> None:
                 ui.button(
                     "Download Layout TXT",
                     icon="text_snippet",
-                    on_click=lambda p=txt_path: ui.download(p.read_bytes(), filename=p.name),
+                    on_click=lambda p=txt_path: ui.download(p.read_bytes(), filename=p.name),  # pyright: ignore[reportAttributeAccessIssue]
                 ).props("flat dense size=sm outline").classes("mb-3").tooltip(
                     "Download the spatial layout text file — open in a monospace editor "
                     "to see text items placed at their bounding-box positions on a character grid."
@@ -410,7 +410,7 @@ def page() -> None:
                 ui.button(
                     "Download Tabular CSV (Excel)",
                     icon="table_chart",
-                    on_click=lambda p=tabular_path: ui.download(p.read_bytes(), filename=p.name),
+                    on_click=lambda p=tabular_path: ui.download(p.read_bytes(), filename=p.name),  # pyright: ignore[reportAttributeAccessIssue]
                 ).props("flat dense size=sm outline color=green").classes("mb-3").tooltip(
                     "Download the tabular CSV — open in Excel to see the report reconstructed "
                     "as a table with rows and columns matching the original document layout."
@@ -563,9 +563,10 @@ def page() -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
-ui.run(
-    title="LiteParse Evaluator",
-    port=8080,
-    reload=False,
-    favicon="📄",
-)
+if __name__ in {"__main__", "__mp_main__"}:
+    ui.run(
+        title="LiteParse Evaluator",
+        port=8080,
+        reload=False,
+        favicon="📄",
+    )
