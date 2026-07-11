@@ -6,9 +6,13 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.pytest_cache/
+htmlcov/
+.coverage
 
 # Virtual environment
 .venv/
+.venv-snapshot-*.txt
 
 # IDE
 .vscode/
