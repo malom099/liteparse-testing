@@ -15,6 +15,7 @@ Then open http://localhost:8080 in your browser.
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -172,6 +173,9 @@ def page() -> None:
         ui.label("LiteParse Evaluator").classes("text-xl font-bold")
         ui.space()
         ui.label("Text Extraction & Bounding Box Quality Testing").classes("text-sm opacity-70")
+        ui.button(icon="close", on_click=lambda: _confirm_exit()).props("flat dense round").tooltip(
+            "Shut down the app and close the terminal"
+        )
 
     # ── Body ──────────────────────────────────────────────────────────────
     with ui.row().classes("w-full gap-0 items-start"):
@@ -307,6 +311,23 @@ def page() -> None:
         else:
             selected.clear()
         _populate_files()
+
+    async def _do_exit() -> None:
+        ui.notify("Shutting down…", type="warning", timeout=1000)
+        await ui.run_javascript("setTimeout(() => window.close(), 300)", timeout=1)
+        # Give the notification/redirect a moment to reach the browser, then
+        # terminate the whole process (and the terminal window/session
+        # running it) rather than just stopping the NiceGUI server loop.
+        ui.timer(0.5, lambda: os._exit(0), once=True)
+
+    def _confirm_exit() -> None:
+        with ui.dialog() as dialog, ui.card():
+            ui.label("Shut down LiteParse Evaluator?").classes("font-semibold")
+            ui.label("This stops the server and closes the terminal running it.").classes("text-sm text-gray-500")
+            with ui.row().classes("w-full justify-end gap-2 mt-2"):
+                ui.button("Cancel", on_click=dialog.close).props("flat")
+                ui.button("Exit", on_click=lambda: (dialog.close(), _do_exit())).props("color=negative")
+        dialog.open()
 
     async def _run() -> None:
         paths = [SAMPLES_DIR / n for n in sorted(selected)]
