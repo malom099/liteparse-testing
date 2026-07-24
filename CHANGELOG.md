@@ -4,6 +4,12 @@ All notable changes to LiteParse Evaluator.
 
 ## [Unreleased]
 
+### Added
+
+- Exit/close button in the header of the NiceGUI UI — opens a confirmation dialog, then
+  shuts down the app and terminates the running process (ending the terminal session it
+  was launched from) rather than just stopping the browser tab.
+
 ### Security
 
 - **Python runtime upgrade 3.11.4 → 3.12.13** — `.venv` recreated on Python 3.12.13;
