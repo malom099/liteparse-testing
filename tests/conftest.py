@@ -1,37 +1,32 @@
 """Shared pytest fixtures and lightweight LiteParse-result fakes.
 
-The real `LiteParse.parse()` result objects are attribute-based (page.text,
-page.text_items, item.x/y/width/height/text, etc.) rather than dicts, so all
-the fakes here are simple objects exposing exactly those attributes. Using
-duck-typed fakes instead of mocking the whole `liteparse` package lets the
-tests exercise the real logic in `evaluate.py` / `quality_check.py` / `app.py`
-without needing an actual document or the (slow, native) LiteParse parser.
+The real result objects passed through this app's evaluate.py/quality_check.py are now
+`ochl_document_parsing.models.ParseResult`/`ParsePage`/`TextItem` instances (produced by the
+shared library's backend factory) rather than liteparse's native objects directly. `FakeItem`/
+`FakePage`/`FakeResult` are thin factory functions returning those exact pydantic model types
+(with sensible test defaults, e.g. auto-filling the required `usage` field) so tests both stay
+concise AND satisfy the library quality-check functions' `ParseResult` type hints — no
+duck-typed stand-ins needed.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from ochl_document_parsing.models import ParsePage, ParseResult, TextItem, UsageInfo
+
+FakeItem = TextItem
 
 
-@dataclass
-class FakeItem:
-    text: str = ""
-    x: float = 0.0
-    y: float = 0.0
-    width: float = 0.0
-    height: float = 0.0
+def FakePage(
+    *,
+    page_no: int = 0,  # 0-based, matching ochl_document_parsing.models.ParsePage
+    width: float = 612.0,
+    height: float = 792.0,
+    text_items: list[TextItem] | None = None,
+    text: str = "",
+) -> ParsePage:
+    return ParsePage(page_no=page_no, width=width, height=height, text_items=text_items or [], text=text)
 
 
-@dataclass
-class FakePage:
-    page_num: int = 1
-    width: float = 612.0
-    height: float = 792.0
-    text_items: list[FakeItem] = field(default_factory=list)
-    text: str | None = None  # if set, _page_text() prefers this over text_items
-
-
-@dataclass
-class FakeResult:
-    pages: list[FakePage] = field(default_factory=list)
-    text: str = ""
+def FakeResult(*, pages: list[ParsePage] | None = None, text: str = "") -> ParseResult:
+    pages = pages or []
+    return ParseResult(pages=pages, text=text, usage=UsageInfo(backend="fake", pages_processed=len(pages)))

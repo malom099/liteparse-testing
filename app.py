@@ -17,14 +17,14 @@ from __future__ import annotations
 import json
 import os
 import time
-from dataclasses import asdict
 from pathlib import Path
 
-from liteparse import LiteParse
 from nicegui import run, ui
+from ochl_document_parsing.backends.factory import get_backend
 
 from evaluate import (
     DocumentReport,
+    document_report_dict,
     evaluate_bboxes,
     evaluate_text_quality,
     write_items_csv,
@@ -91,7 +91,7 @@ def _parse_and_evaluate(
     Designed to be called via run.io_bound() so the UI stays responsive.
     Returns (doc_report, kw_report, co_report, csv_path_or_None, txt_path_or_None, tabular_csv_path_or_None).
     """
-    parser = LiteParse(ocr_enabled=ocr, dpi=dpi, quiet=True)
+    parser = get_backend("liteparse", ocr_enabled=ocr, dpi=dpi, quiet=True)
     t0 = time.perf_counter()
     try:
         result = parser.parse(str(path))
@@ -358,7 +358,7 @@ def page() -> None:
             # Save JSON report
             out = RESULTS_DIR / (path.stem + "_report.json")
             with out.open("w", encoding="utf-8") as fh:
-                json.dump(asdict(doc_report), fh, indent=2)
+                json.dump(document_report_dict(doc_report), fh, indent=2)
 
             _render_result_card(results_col, doc_report, kw_report, co_report, csv_path, txt_path, tabular_path)
 

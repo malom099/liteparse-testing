@@ -25,8 +25,6 @@ changelog_staged = any("changelog" in f.lower() for f in staged)
 
 if source_changed and not changelog_staged:
     print("Reminder: .py source files changed but CHANGELOG.md was not updated.")
-    print(
-        "  -> If this is a notable change, add an entry under [Unreleased] before merging."
-    )
+    print("  -> If this is a notable change, add an entry under [Unreleased] before merging.")
 
 sys.exit(0)

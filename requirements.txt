@@ -1,2 +1,8 @@
 liteparse
 nicegui
+
+# Shared, cross-repo document parsing/quality-check library (editable install of the sibling
+# repo). Provides the backend factory (LiteParse/LlamaParse/Azure DI) and the backend-agnostic
+# quality-check functions (text quality, bbox accuracy, keyword check, coherence) that this app
+# now delegates to instead of maintaining its own duplicate copies.
+-e ../OCHLDocumentParsingLibrary

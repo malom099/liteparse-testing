@@ -4,6 +4,36 @@ All notable changes to LiteParse Evaluator.
 
 ## [Unreleased]
 
+### Changed
+
+- **Migrated to consume the shared `ochl_document_parsing` library** instead of
+  maintaining duplicate parsing/quality-check logic:
+  - Added `OCHLDocumentParsingLibrary` as an editable dependency
+    (`-e ../OCHLDocumentParsingLibrary` in `requirements.txt`; `extraPaths` added to
+    `[tool.pyright]` in `pyproject.toml`).
+  - `evaluate.py` now builds its parser via
+    `ochl_document_parsing.backends.factory.get_backend("liteparse", **kwargs)` instead of
+    constructing `liteparse.LiteParse(...)` directly, and imports `evaluate_text_quality()`/
+    `evaluate_bboxes()` (and their `TextQualityResult`/`BBoxResult` result types) from
+    `ochl_document_parsing.quality` instead of defining them locally. Added a
+    `document_report_dict()` helper to correctly JSON-serialize `DocumentReport` now that its
+    `text_quality`/`bbox` fields are pydantic models rather than plain dataclasses.
+  - `quality_check.py` is now a thin re-export shim over
+    `ochl_document_parsing.quality.{keyword_check, coherence_check, KeywordCheckReport,
+KeywordResult, CoherenceReport}` — all ~230 lines of duplicate implementation removed.
+  - `app.py` updated to use the same shared backend factory and `document_report_dict()`
+    helper as `evaluate.py`.
+  - Enhanced `ochl_document_parsing`'s `LiteParseBackend` (library-side change) to accept
+    and forward constructor kwargs (`ocr_enabled`, `dpi`, `tessdata_path`, `quiet`, etc.) to
+    the real `liteparse.LiteParse(...)`, so this app's `--no-ocr`/`--dpi`/`--tessdata`
+    options keep working through the shared backend.
+  - Test fixtures (`tests/conftest.py`) now construct real
+    `ochl_document_parsing.models.ParsePage`/`ParseResult`/`TextItem` instances (via
+    `FakePage`/`FakeResult`/`FakeItem` factory helpers) instead of hand-rolled dataclasses,
+    including the `page_no` (0-based) field rename to match the library's convention.
+  - Verified: `pytest tests/ -q` (41/41 passed), `ruff check .`, `ruff format --check .`,
+    and `pyright` all clean after the migration.
+
 ### Added
 
 - Exit/close button in the header of the NiceGUI UI — opens a confirmation dialog, then

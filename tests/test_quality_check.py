@@ -7,8 +7,6 @@ classification/scoring logic against them.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from quality_check import coherence_check, keyword_check
 from tests.conftest import FakePage, FakeResult
 
@@ -17,7 +15,7 @@ class TestKeywordCheck:
     def test_all_snippets_found_reports_correct_counts(self):
         result = FakeResult(
             text="Total Return 12.5% for the quarter ending March 2026.",
-            pages=[FakePage(page_num=1, text="Total Return 12.5% for the quarter ending March 2026.")],
+            pages=[FakePage(page_no=0, text="Total Return 12.5% for the quarter ending March 2026.")],
         )
 
         report = keyword_check(result, ["Total Return", "March 2026"])
@@ -49,9 +47,9 @@ class TestKeywordCheck:
 
     def test_page_found_identifies_correct_page(self):
         pages = [
-            FakePage(page_num=1, text="Introduction and overview."),
-            FakePage(page_num=2, text="Performance summary: NAV increased 3%."),
-            FakePage(page_num=3, text="Disclosures and appendix."),
+            FakePage(page_no=0, text="Introduction and overview."),
+            FakePage(page_no=1, text="Performance summary: NAV increased 3%."),
+            FakePage(page_no=2, text="Disclosures and appendix."),
         ]
         result = FakeResult(text=" ".join(p.text or "" for p in pages), pages=pages)
 
@@ -81,11 +79,12 @@ class TestKeywordCheck:
         assert report.snippets_missing == 0
         assert report.results == []
 
-    def test_missing_result_text_attribute_defaults_to_empty(self):
-        """A result with no `.text` (None) must not raise, and reports the snippet missing."""
-        no_text_result = SimpleNamespace(pages=[])
+    def test_result_with_no_pages_and_empty_text_reports_all_missing(self):
+        """A ParseResult with no pages and empty text (e.g. a failed/empty parse) must not
+        raise, and reports every snippet missing."""
+        empty_result = FakeResult(pages=[], text="")
 
-        report = keyword_check(no_text_result, ["anything"])
+        report = keyword_check(empty_result, ["anything"])
 
         assert report.snippets_found == 0
         assert report.results[0].found is False

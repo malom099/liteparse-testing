@@ -41,10 +41,16 @@ import json
 import statistics
 import sys
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from liteparse import LiteParse
+from ochl_document_parsing.backends.factory import get_backend
+from ochl_document_parsing.quality import (
+    BBoxResult,
+    TextQualityResult,
+    evaluate_bboxes,
+    evaluate_text_quality,
+)
 
 # ---------------------------------------------------------------------------
 # Supported file extensions
@@ -79,37 +85,12 @@ SUPPORTED_EXTENSIONS = {
 # ---------------------------------------------------------------------------
 # Result data classes
 # ---------------------------------------------------------------------------
-
-
-@dataclass
-class TextQualityResult:
-    """Per-document text extraction quality metrics."""
-
-    page_count: int
-    total_chars: int
-    total_words: int
-    avg_chars_per_page: float
-    char_stddev: float
-    empty_pages: int  # pages with 0 characters
-    near_empty_pages: int  # pages with 1-49 characters (likely extraction issue)
-    min_chars_on_page: int
-    max_chars_on_page: int
-    chars_per_page: list[int] = field(default_factory=list)
-
-
-@dataclass
-class BBoxResult:
-    """Per-document bounding-box spatial accuracy metrics."""
-
-    total_text_items: int
-    avg_items_per_page: float
-    pages_with_no_items: int
-    items_with_zero_size: int  # width or height == 0
-    items_out_of_bounds: int  # coordinate exceeds reported page dimensions
-    avg_page_coverage: float  # mean fraction of page area covered by text boxes
-    min_page_coverage: float
-    max_page_coverage: float
-    coverage_per_page: list[float] = field(default_factory=list)
+#
+# TextQualityResult and BBoxResult are no longer defined here — they, and the
+# evaluate_text_quality()/evaluate_bboxes() functions that compute them, now live in
+# ochl_document_parsing.quality (shared with OCHLInvestmentAnalystAgent) and are imported
+# above. Re-exported here so existing `from evaluate import TextQualityResult` etc. call
+# sites (app.py, tests) keep working unchanged.
 
 
 @dataclass
@@ -125,102 +106,20 @@ class DocumentReport:
     error: str | None = None
 
 
-# ---------------------------------------------------------------------------
-# Core evaluation helpers
-# ---------------------------------------------------------------------------
+def document_report_dict(report: DocumentReport) -> dict:
+    """JSON-serializable dict for a `DocumentReport`.
 
-
-def _page_text(page) -> str:
-    """Safely obtain page text regardless of attribute name."""
-    # Try the standard attribute first, then fall back to concatenating text_items
-    txt = getattr(page, "text", None)
-    if txt is not None:
-        return txt
-    items = getattr(page, "text_items", []) or []
-    return " ".join(getattr(item, "text", "") for item in items)
-
-
-def evaluate_text_quality(result) -> TextQualityResult:
-    pages = result.pages or []
-    chars_per_page: list[int] = [len(_page_text(p).strip()) for p in pages]
-
-    total_chars = sum(chars_per_page)
-    total_words = len(result.text.split()) if result.text else 0
-    page_count = len(pages)
-
-    empty = sum(1 for c in chars_per_page if c == 0)
-    near_empty = sum(1 for c in chars_per_page if 0 < c < 50)
-    avg = statistics.mean(chars_per_page) if chars_per_page else 0.0
-    stddev = statistics.stdev(chars_per_page) if len(chars_per_page) > 1 else 0.0
-
-    return TextQualityResult(
-        page_count=page_count,
-        total_chars=total_chars,
-        total_words=total_words,
-        avg_chars_per_page=round(avg, 1),
-        char_stddev=round(stddev, 1),
-        empty_pages=empty,
-        near_empty_pages=near_empty,
-        min_chars_on_page=min(chars_per_page, default=0),
-        max_chars_on_page=max(chars_per_page, default=0),
-        chars_per_page=chars_per_page,
-    )
-
-
-def evaluate_bboxes(result) -> BBoxResult:
-    pages = result.pages or []
-    total_items = 0
-    zero_size = 0
-    out_of_bounds = 0
-    pages_no_items = 0
-    coverage_per_page: list[float] = []
-
-    for page in pages:
-        items = getattr(page, "text_items", []) or []
-        page_w = getattr(page, "width", 0) or 0
-        page_h = getattr(page, "height", 0) or 0
-        page_area = page_w * page_h
-
-        total_items += len(items)
-
-        if not items:
-            pages_no_items += 1
-            coverage_per_page.append(0.0)
-            continue
-
-        covered = 0.0
-        for item in items:
-            iw = getattr(item, "width", 0) or 0
-            ih = getattr(item, "height", 0) or 0
-            ix = getattr(item, "x", 0) or 0
-            iy = getattr(item, "y", 0) or 0
-
-            if iw <= 0 or ih <= 0:
-                zero_size += 1
-                continue
-
-            if page_w > 0 and page_h > 0 and (ix < 0 or iy < 0 or (ix + iw) > page_w or (iy + ih) > page_h):
-                out_of_bounds += 1
-
-            covered += iw * ih
-
-        ratio = min(covered / page_area, 1.0) if page_area > 0 else 0.0
-        coverage_per_page.append(round(ratio, 4))
-
-    n = len(pages) or 1
-    avg_cov = statistics.mean(coverage_per_page) if coverage_per_page else 0.0
-
-    return BBoxResult(
-        total_text_items=total_items,
-        avg_items_per_page=round(total_items / n, 1),
-        pages_with_no_items=pages_no_items,
-        items_with_zero_size=zero_size,
-        items_out_of_bounds=out_of_bounds,
-        avg_page_coverage=round(avg_cov, 4),
-        min_page_coverage=round(min(coverage_per_page, default=0.0), 4),
-        max_page_coverage=round(max(coverage_per_page, default=0.0), 4),
-        coverage_per_page=coverage_per_page,
-    )
+    `dataclasses.asdict()` alone doesn't know how to serialize the nested `TextQualityResult`/
+    `BBoxResult` fields since those are pydantic models (from the shared library), not
+    dataclasses — it leaves them as-is, which then fails `json.dump()`. This converts those
+    two fields via `model_dump()` first.
+    """
+    d = asdict(report)
+    if report.text_quality is not None:
+        d["text_quality"] = report.text_quality.model_dump()
+    if report.bbox is not None:
+        d["bbox"] = report.bbox.model_dump()
+    return d
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +142,7 @@ def write_items_csv(result, out_path: Path) -> None:
         writer = csv.writer(fh)
         writer.writerow(["page", "item", "x", "y", "width", "height", "text"])
         for page in pages:
-            page_num = getattr(page, "page_num", None) or getattr(page, "page", "?")
+            page_num = page.page_no + 1
             items = getattr(page, "text_items", []) or []
             for idx, item in enumerate(items, start=1):
                 writer.writerow(
@@ -288,7 +187,7 @@ def write_tabular_csv(result, out_path: Path, row_tolerance: float = 4.0) -> Non
         writer = csv.writer(fh)
 
         for page in pages:
-            page_num = getattr(page, "page_num", None) or getattr(page, "page", "?")
+            page_num = page.page_no + 1
             items = getattr(page, "text_items", []) or []
             if not items:
                 continue
@@ -369,7 +268,7 @@ def write_layout_txt(result, out_path: Path, grid_cols: int = 120) -> None:
     pages = getattr(result, "pages", []) or []
     with out_path.open("w", newline="", encoding="utf-8") as fh:
         for page in pages:
-            page_num = getattr(page, "page_num", None) or getattr(page, "page", "?")
+            page_num = page.page_no + 1
             page_w = getattr(page, "width", 0) or 0
             page_h = getattr(page, "height", 0) or 0
             items = getattr(page, "text_items", []) or []
@@ -434,11 +333,11 @@ def evaluate_document(
     if tessdata_path:
         kwargs["tessdata_path"] = tessdata_path
 
-    parser = LiteParse(**kwargs)
+    backend = get_backend("liteparse", **kwargs)
 
     t0 = time.perf_counter()
     try:
-        result = parser.parse(str(path))
+        result = backend.parse(str(path))
     except Exception as exc:
         elapsed = round(time.perf_counter() - t0, 3)
         return DocumentReport(
@@ -694,14 +593,14 @@ def main() -> None:
         # Per-file JSON report
         out_file = output_dir / (f.stem + "_liteparse_report.json")
         with out_file.open("w", encoding="utf-8") as fh:
-            json.dump(asdict(report), fh, indent=2)
+            json.dump(document_report_dict(report), fh, indent=2)
 
     print_summary(reports)
 
     # Combined report
     combined_path = output_dir / "combined_report.json"
     with combined_path.open("w", encoding="utf-8") as fh:
-        json.dump([asdict(r) for r in reports], fh, indent=2)
+        json.dump([document_report_dict(r) for r in reports], fh, indent=2)
 
     print(f"\nJSON reports saved to: {output_dir.resolve()}/")
     if not args.no_csv:

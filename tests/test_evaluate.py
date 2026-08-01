@@ -69,11 +69,12 @@ class TestEvaluateTextQuality:
 
         assert tq.char_stddev == 0.0
 
-    def test_falls_back_to_text_items_when_page_text_is_none(self):
-        page = FakePage(
-            text=None,
-            text_items=[FakeItem(text="Alpha"), FakeItem(text="Beta")],
-        )
+    def test_page_text_is_used_directly_for_char_counts(self):
+        """ParsePage.text is always a str (never None) once produced by the shared library's
+        backend, so evaluate_text_quality() reads it directly rather than falling back to
+        joining text_items (that join happens once, upstream, when the backend builds the
+        ParseResult)."""
+        page = FakePage(text="Alpha Beta")
         result = FakeResult(pages=[page], text="Alpha Beta")
 
         tq = evaluate_text_quality(result)
@@ -180,7 +181,7 @@ class TestEvaluateBboxes:
 class TestWriteItemsCsv:
     def test_writes_header_and_all_items(self, tmp_path):
         page = FakePage(
-            page_num=1,
+            page_no=0,
             text_items=[
                 FakeItem(text="Alpha", x=1.234, y=5.678, width=10, height=20),
                 FakeItem(text="Beta", x=2, y=3, width=4, height=5),
@@ -195,13 +196,15 @@ class TestWriteItemsCsv:
             rows = list(csv.reader(fh))
 
         assert rows[0] == ["page", "item", "x", "y", "width", "height", "text"]
-        assert rows[1] == ["1", "1", "1.23", "5.68", "10", "20", "Alpha"]
-        assert rows[2] == ["1", "2", "2", "3", "4", "5", "Beta"]
+        # Note: TextItem is a pydantic model, so int literals passed for width/height are
+        # coerced to float (10 -> 10.0) — real backends always produce floats anyway.
+        assert rows[1] == ["1", "1", "1.23", "5.68", "10.0", "20.0", "Alpha"]
+        assert rows[2] == ["1", "2", "2.0", "3.0", "4.0", "5.0", "Beta"]
 
     def test_multi_page_document_writes_all_pages(self, tmp_path):
         pages = [
-            FakePage(page_num=1, text_items=[FakeItem(text="P1")]),
-            FakePage(page_num=2, text_items=[FakeItem(text="P2")]),
+            FakePage(page_no=0, text_items=[FakeItem(text="P1")]),
+            FakePage(page_no=1, text_items=[FakeItem(text="P2")]),
         ]
         result = FakeResult(pages=pages)
         out_path = tmp_path / "items.csv"
@@ -230,7 +233,7 @@ class TestWriteTabularCsv:
     def test_groups_items_into_rows_and_columns(self, tmp_path):
         # Two rows of two columns each, well-separated so clustering is unambiguous.
         page = FakePage(
-            page_num=1,
+            page_no=0,
             text_items=[
                 FakeItem(text="Name", x=0, y=0, width=40, height=10),
                 FakeItem(text="Value", x=100, y=0, width=40, height=10),
@@ -252,7 +255,7 @@ class TestWriteTabularCsv:
 
     def test_items_within_row_tolerance_share_a_row(self, tmp_path):
         page = FakePage(
-            page_num=1,
+            page_no=0,
             text_items=[
                 FakeItem(text="A", x=0, y=10.0, width=10, height=10),
                 FakeItem(text="B", x=100, y=11.5, width=10, height=10),  # within default 4pt tolerance
@@ -268,7 +271,7 @@ class TestWriteTabularCsv:
         assert any("A" in r and "B" in r for r in rows)
 
     def test_empty_page_produces_no_output(self, tmp_path):
-        result = FakeResult(pages=[FakePage(page_num=1, text_items=[])])
+        result = FakeResult(pages=[FakePage(page_no=0, text_items=[])])
         out_path = tmp_path / "tabular.csv"
 
         write_tabular_csv(result, out_path)
@@ -280,7 +283,7 @@ class TestWriteTabularCsv:
 class TestWriteLayoutTxt:
     def test_writes_page_header_and_positions_text(self, tmp_path):
         page = FakePage(
-            page_num=1,
+            page_no=0,
             width=120.0,
             height=240.0,
             text_items=[FakeItem(text="Hello", x=0, y=0, width=10, height=10)],
@@ -296,7 +299,7 @@ class TestWriteLayoutTxt:
 
     def test_falls_back_to_raw_lines_when_no_spatial_data(self, tmp_path):
         page = FakePage(
-            page_num=1,
+            page_no=0,
             width=0,
             height=0,
             text_items=[FakeItem(text="Just some text", x=0, y=0, width=0, height=0)],
@@ -311,7 +314,7 @@ class TestWriteLayoutTxt:
 
     def test_empty_text_items_are_skipped(self, tmp_path):
         page = FakePage(
-            page_num=1,
+            page_no=0,
             width=100.0,
             height=100.0,
             text_items=[FakeItem(text="   ", x=0, y=0, width=10, height=10)],

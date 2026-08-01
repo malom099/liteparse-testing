@@ -50,6 +50,7 @@ pythonVersion = "3.12"
 typeCheckingMode = "basic"
 venvPath = "."
 venv = ".venv"
+extraPaths = ["../OCHLDocumentParsingLibrary/src"]
 exclude = [
     ".venv",
     "__pycache__",
