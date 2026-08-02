@@ -29,6 +29,7 @@ liteparse_eval/
   requirements.txt         # runtime deps: liteparse, nicegui
   requirements-dev.txt     # dev / CI deps: ruff, bandit, pyright, etc.
   setup-env.ps1            # one-shot venv bootstrap
+  run.ps1                  # one-shot launcher (activates .venv, runs app.py)
   samples/                 # drop documents here — gitignored except .gitkeep
   results/                 # JSON reports written here — gitignored
 ```
@@ -41,14 +42,18 @@ liteparse_eval/
 # 1. Create virtual environment and install dependencies
 powershell -ExecutionPolicy Bypass -File setup-env.ps1
 
-# 2. Activate the venv
-.\.venv\Scripts\Activate.ps1
+# 2. Drop one or more documents into samples\
 
-# 3. Drop one or more documents into samples\
-
-# 4. Launch the browser UI
-python app.py
+# 3. Launch the browser UI
+.\run.ps1
 # → open http://localhost:8080
+```
+
+Or manually:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python app.py
 ```
 
 ### CLI (headless / batch)

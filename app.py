@@ -15,11 +15,10 @@ Then open http://localhost:8080 in your browser.
 from __future__ import annotations
 
 import json
-import os
 import time
 from pathlib import Path
 
-from nicegui import run, ui
+from nicegui import app, run, ui
 from ochl_document_parsing.backends.factory import get_backend
 
 from evaluate import (
@@ -173,95 +172,111 @@ def page() -> None:
         ui.label("LiteParse Evaluator").classes("text-xl font-bold")
         ui.space()
         ui.label("Text Extraction & Bounding Box Quality Testing").classes("text-sm opacity-70")
-        ui.button(icon="close", on_click=lambda: _confirm_exit()).props("flat dense round").tooltip(
-            "Shut down the app and close the terminal"
+        ui.button(icon="power_settings_new", on_click=lambda: _confirm_exit()).props("flat dense round").tooltip(
+            "Shut down the app"
         )
 
     # ── Body ──────────────────────────────────────────────────────────────
     with ui.row().classes("w-full gap-0 items-start"):
         # ── LEFT SIDEBAR ──────────────────────────────────────────────────
-        with ui.column().classes("w-80 min-h-screen bg-gray-50 border-r border-gray-200 p-4 gap-4 shrink-0"):
-            # --- File browser ---
-            with ui.card().classes("w-full"):
-                with ui.row().classes("items-center justify-between w-full mb-1"):
-                    ui.label("Documents").classes("font-semibold text-gray-700 text-base")
-                    ui.button(icon="refresh", on_click=lambda: _refresh()).props("flat dense round").tooltip(
-                        "Rescan samples/ folder"
-                    )
-
-                ui.separator()
-
-                with ui.scroll_area().classes("h-52 w-full"):
-                    file_list_col = ui.column().classes("w-full gap-0 pr-2")
-
-                with ui.row().classes("gap-2 mt-2"):
-                    ui.button("Select all", on_click=lambda: _select_all(True)).props("flat dense size=sm outline")
-                    ui.button("Clear", on_click=lambda: _select_all(False)).props("flat dense size=sm outline")
-
-                ui.label("Drop files into the samples/ folder, then refresh.").classes(
-                    "text-xs text-gray-400 mt-2 leading-snug"
-                )
-
-            # --- Settings ---
-            with ui.card().classes("w-full"):
-                ui.label("Settings").classes("font-semibold text-gray-700 text-base mb-2")
-
-                ocr_switch = ui.switch("Enable Tesseract OCR", value=True).tooltip(
-                    "OCR is on by default — LiteParse only runs Tesseract on pages where "
-                    "native text extraction returns nothing, so the cost on digital PDFs is negligible. "
-                    "Disable for maximum speed on known native-text documents."
-                )
-                dpi_input = (
-                    ui.number("Render DPI", value=150, min=72, max=600, step=50, format="%.0f")
-                    .classes("w-full mt-3")
-                    .tooltip("Higher DPI improves OCR accuracy but increases parse time.")
-                )
-                csv_switch = (
-                    ui.switch("Export to CSV", value=True)
-                    .classes("mt-2")
-                    .tooltip(
-                        "Save a *_items.csv file alongside each JSON report. "
-                        "Opens in Excel with columns: page, item, x, y, width, height, text."
-                    )
-                )
-                txt_switch = (
-                    ui.switch("Export Layout TXT", value=True)
-                    .classes("mt-2")
-                    .tooltip(
-                        "Save a *_layout.txt file that reproduces the visual layout of each page in plain text. "
-                        "Text items are placed at their bounding-box positions on a character grid — "
-                        "best viewed in a monospace editor."
-                    )
-                )
-                tabular_switch = (
-                    ui.switch("Export Tabular CSV (Excel)", value=True)
-                    .classes("mt-2")
-                    .tooltip(
-                        "Save a *_tabular.csv file where rows and columns are clustered from bounding-box "
-                        "positions — open directly in Excel to see the report reconstructed as a table "
-                        "with partner rows, header columns, and numeric values aligned."
-                    )
-                )
-
-            # --- Keywords ---
-            with ui.card().classes("w-full"):
-                ui.label("Expected Keywords").classes("font-semibold text-gray-700 text-base")
-                ui.label("One snippet per line — verified against every selected document.").classes(
-                    "text-xs text-gray-400 mb-2 leading-snug"
-                )
-
-                keywords_area = (
-                    ui.textarea(placeholder="Net Asset Value\n31 December 2025\nTotal Return")
+        with (
+            ui.column()
+            .classes("w-80 shrink-0 self-start sticky top-0 bg-gray-50 border-r border-gray-200 gap-0")
+            .style("min-height: calc(100vh - 64px)")
+        ):
+            # --- Run button: pinned at the top, always visible, no scrolling required ---
+            with ui.column().classes("w-full p-4 pb-3 gap-1 bg-white border-b border-gray-200 shadow-sm z-10"):
+                run_btn = (
+                    ui.button("Run Evaluation", icon="play_circle", on_click=lambda: _run())
                     .classes("w-full")
-                    .props("outlined dense rows=5")
+                    .props("color=blue size=lg unelevated")
+                )
+                run_hint_label = ui.label("Select at least one document to enable evaluation.").classes(
+                    "text-xs text-gray-400 text-center w-full"
                 )
 
-            # --- Run button ---
-            run_btn = (
-                ui.button("Run Evaluation", icon="play_circle", on_click=lambda: _run())
-                .classes("w-full mt-1")
-                .props("color=blue size=lg")
-            )
+            with ui.column().classes("w-full p-4 gap-3"):
+                # --- File browser ---
+                with ui.card().classes("w-full").props("flat bordered"):
+                    with ui.row().classes("items-center justify-between w-full mb-1"):
+                        with ui.row().classes("items-center gap-2"):
+                            ui.icon("folder_open").classes("text-gray-500")
+                            ui.label("Documents").classes("font-semibold text-gray-700 text-base")
+                        ui.button(icon="refresh", on_click=lambda: _refresh()).props("flat dense round").tooltip(
+                            "Rescan samples/ folder"
+                        )
+
+                    ui.separator()
+
+                    with ui.scroll_area().classes("h-40 w-full"):
+                        file_list_col = ui.column().classes("w-full gap-0 pr-2")
+
+                    with ui.row().classes("gap-2 mt-2"):
+                        ui.button("Select all", on_click=lambda: _select_all(True)).props("flat dense size=sm outline")
+                        ui.button("Clear", on_click=lambda: _select_all(False)).props("flat dense size=sm outline")
+
+                    ui.label("Drop files into the samples/ folder, then refresh.").classes(
+                        "text-xs text-gray-400 mt-2 leading-snug"
+                    )
+
+                # --- Settings (collapsible to save vertical space) ---
+                with (
+                    ui.expansion("Settings", icon="tune", value=True)
+                    .classes("w-full bg-white rounded-lg border border-gray-200")
+                    .props("dense-toggle expand-icon-toggle header-class=text-gray-700")
+                ):
+                    ocr_switch = ui.switch("Enable Tesseract OCR", value=True).tooltip(
+                        "OCR is on by default — LiteParse only runs Tesseract on pages where "
+                        "native text extraction returns nothing, so the cost on digital PDFs is negligible. "
+                        "Disable for maximum speed on known native-text documents."
+                    )
+                    dpi_input = (
+                        ui.number("Render DPI", value=150, min=72, max=600, step=50, format="%.0f")
+                        .classes("w-full mt-3")
+                        .tooltip("Higher DPI improves OCR accuracy but increases parse time.")
+                    )
+                    csv_switch = (
+                        ui.switch("Export to CSV", value=True)
+                        .classes("mt-2")
+                        .tooltip(
+                            "Save a *_items.csv file alongside each JSON report. "
+                            "Opens in Excel with columns: page, item, x, y, width, height, text."
+                        )
+                    )
+                    txt_switch = (
+                        ui.switch("Export Layout TXT", value=True)
+                        .classes("mt-2")
+                        .tooltip(
+                            "Save a *_layout.txt file that reproduces the visual layout of each page in plain "
+                            "text. Text items are placed at their bounding-box positions on a character grid — "
+                            "best viewed in a monospace editor."
+                        )
+                    )
+                    tabular_switch = (
+                        ui.switch("Export Tabular CSV (Excel)", value=True)
+                        .classes("mt-2 mb-2")
+                        .tooltip(
+                            "Save a *_tabular.csv file where rows and columns are clustered from bounding-box "
+                            "positions — open directly in Excel to see the report reconstructed as a table "
+                            "with partner rows, header columns, and numeric values aligned."
+                        )
+                    )
+
+                # --- Keywords (collapsible, collapsed by default to keep the panel compact) ---
+                with (
+                    ui.expansion("Expected Keywords", icon="key", value=False)
+                    .classes("w-full bg-white rounded-lg border border-gray-200")
+                    .props("dense-toggle expand-icon-toggle header-class=text-gray-700")
+                ):
+                    ui.label("One snippet per line — verified against every selected document.").classes(
+                        "text-xs text-gray-400 mb-2 leading-snug"
+                    )
+
+                    keywords_area = (
+                        ui.textarea(placeholder="Net Asset Value\n31 December 2025\nTotal Return")
+                        .classes("w-full mb-2")
+                        .props("outlined dense rows=5")
+                    )
 
         # ── RIGHT MAIN AREA ────────────────────────────────────────────────
         with ui.column().classes("flex-1 p-5 gap-4 min-w-0"):
@@ -295,14 +310,24 @@ def page() -> None:
                 chk.on_value_change(lambda e, name=f.name: _toggle(name, e.value))  # pyright: ignore[reportArgumentType]
                 file_checkbox_map[f.name] = chk
 
+    def _update_run_btn_state() -> None:
+        if selected:
+            run_btn.props(remove="disable")
+            run_hint_label.set_visibility(False)
+        else:
+            run_btn.props("disable")
+            run_hint_label.set_visibility(True)
+
     def _toggle(name: str, checked: bool) -> None:
         if checked:
             selected.add(name)
         else:
             selected.discard(name)
+        _update_run_btn_state()
 
     def _refresh() -> None:
         _populate_files()
+        _update_run_btn_state()
         ui.notify("File list refreshed", type="positive", timeout=1200)
 
     def _select_all(state: bool) -> None:
@@ -311,22 +336,37 @@ def page() -> None:
         else:
             selected.clear()
         _populate_files()
+        _update_run_btn_state()
 
     async def _do_exit() -> None:
-        ui.notify("Shutting down…", type="warning", timeout=1000)
-        await ui.run_javascript("setTimeout(() => window.close(), 300)", timeout=1)
-        # Give the notification/redirect a moment to reach the browser, then
-        # terminate the whole process (and the terminal window/session
-        # running it) rather than just stopping the NiceGUI server loop.
-        ui.timer(0.5, lambda: os._exit(0), once=True)
+        # Most browsers block window.close() on tabs that weren't opened via window.open(),
+        # so we can't reliably force the tab shut — show a clear "safe to close" message
+        # instead of a silently-failing auto-close attempt.
+        with ui.dialog(value=True).props("persistent") as shutdown_dialog, ui.card().classes("items-center gap-2 p-6"):
+            ui.icon("power_settings_new").classes("text-4xl text-gray-400")
+            ui.label("Server stopped").classes("text-lg font-semibold")
+            ui.label("You can close this browser tab now.").classes("text-sm text-gray-500")
+        shutdown_dialog.open()
+        # Best-effort attempt in case this tab *was* opened via script (no-op otherwise).
+        await ui.run_javascript("window.close()", timeout=1)
+        # Give the dialog a moment to render, then gracefully stop the NiceGUI/uvicorn server.
+        # Avoids os._exit(), which killed the process mid-response and printed tracebacks in
+        # the terminal. The terminal itself returns to a normal prompt once the process exits.
+        ui.timer(0.5, app.shutdown, once=True)
 
     def _confirm_exit() -> None:
+        async def _on_shut_down() -> None:
+            dialog.close()
+            await _do_exit()
+
         with ui.dialog() as dialog, ui.card():
             ui.label("Shut down LiteParse Evaluator?").classes("font-semibold")
-            ui.label("This stops the server and closes the terminal running it.").classes("text-sm text-gray-500")
+            ui.label("This stops the server. You'll need to close this browser tab yourself afterward.").classes(
+                "text-sm text-gray-500"
+            )
             with ui.row().classes("w-full justify-end gap-2 mt-2"):
                 ui.button("Cancel", on_click=dialog.close).props("flat")
-                ui.button("Exit", on_click=lambda: (dialog.close(), _do_exit())).props("color=negative")
+                ui.button("Shut Down", on_click=_on_shut_down).props("color=negative")
         dialog.open()
 
     async def _run() -> None:
@@ -578,6 +618,7 @@ def page() -> None:
 
     # ── Initial population ────────────────────────────────────────────────
     _populate_files()
+    _update_run_btn_state()
 
 
 # ---------------------------------------------------------------------------

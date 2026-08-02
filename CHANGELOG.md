@@ -36,9 +36,22 @@ KeywordResult, CoherenceReport}` — all ~230 lines of duplicate implementation 
 
 ### Added
 
-- Exit/close button in the header of the NiceGUI UI — opens a confirmation dialog, then
-  shuts down the app and terminates the running process (ending the terminal session it
-  was launched from) rather than just stopping the browser tab.
+- **`run.ps1`** — one-shot launcher script (matching the convention used by other projects
+  in this workspace, e.g. `DevSessionTracker`): checks for `.venv`, then runs `python app.py`
+  and prints the browser URL. Port is overridable via the `LITEPARSE_EVAL_PORT` env var
+  (default `8080`).
+- Exit/shutdown button in the header of the NiceGUI UI (now a power-icon button, not an
+  "X") — opens a confirmation dialog, then gracefully stops the server via NiceGUI's
+  `app.shutdown()` and shows a "Server stopped — you can close this browser tab now."
+  message (a best-effort `window.close()` is also attempted, though most browsers block
+  scripted closing of tabs they didn't open themselves).
+- **Sidebar redesign** — the "Run Evaluation" button is now pinned at the top of the left
+  sidebar (sticky, always visible) instead of sitting at the bottom below Settings and
+  Keywords, which previously required scrolling to reach. Settings and Expected Keywords
+  are now collapsible sections so the whole panel more comfortably fits on one screen.
+- **Run Evaluation button is disabled until at least one document is selected**, with a
+  hint label ("Select at least one document to enable evaluation.") shown beneath it that
+  toggles as the selection changes.
 
 ### Security
 
@@ -91,6 +104,15 @@ KeywordResult, CoherenceReport}` — all ~230 lines of duplicate implementation 
   `if __name__ in {"__main__", "__mp_main__"}:`, matching the standard NiceGUI entry-point
   pattern already used correctly elsewhere in this workspace — `python app.py` behavior is
   unchanged, but the module can now be safely imported for testing or reuse.
+- **Shutdown button silently did nothing** — the "Shut Down" confirmation button used
+  `on_click=lambda: (dialog.close(), _do_exit())`, which called the async `_do_exit()`
+  inside a plain lambda without awaiting it. NiceGUI logged
+  `RuntimeWarning: coroutine '_do_exit' was never awaited` and none of its code (closing
+  the dialog's own "server stopped" message, or actually stopping the server) ever ran, so
+  the page just stayed open. Replaced with a proper `async def _on_shut_down()` handler
+  passed directly as `on_click`, which NiceGUI awaits correctly. Also replaced the earlier
+  `os._exit(0)` (which killed the process mid-response and printed tracebacks in the
+  terminal) with NiceGUI's `app.shutdown()` for a clean, graceful stop.
 
 ---
 
