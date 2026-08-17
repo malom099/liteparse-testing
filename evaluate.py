@@ -316,6 +316,14 @@ def write_layout_txt(result, out_path: Path, grid_cols: int = 120) -> None:
             fh.write("\n")
 
 
+def write_markdown(result, out_path: Path) -> None:
+    """Write the whole-document Markdown produced by LiteParse (one block per page,
+    separated by a `---` rule). Empty/no-op if the backend didn't produce Markdown."""
+    markdown = getattr(result, "markdown", "") or ""
+    with out_path.open("w", newline="", encoding="utf-8") as fh:
+        fh.write(markdown)
+
+
 def evaluate_document(
     path: Path,
     ocr_enabled: bool = True,

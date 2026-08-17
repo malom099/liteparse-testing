@@ -114,6 +114,23 @@ KeywordResult, CoherenceReport}` — all ~230 lines of duplicate implementation 
   `os._exit(0)` (which killed the process mid-response and printed tracebacks in the
   terminal) with NiceGUI's `app.shutdown()` for a clean, graceful stop.
 
+### Added
+
+- **OCR-needed suggestion banner** — `_parse_and_evaluate()` now also runs LiteParse's
+  cheap `is_complex()` text-layer-only pre-check (via a new `check_complexity()` helper,
+  using `liteparse.LiteParse` directly since this diagnostic isn't part of the
+  backend-agnostic `ochl_document_parsing` interface) alongside the full parse. If OCR was
+  left off for a run but a document looks like it needs it, its result card shows an amber
+  warning banner naming the specific reasons (e.g. `scanned`, `sparse-text`, `garbled`)
+  instead of silently returning poor-quality text.
+- **Markdown export** — new "Export Markdown" switch (off by default) alongside the
+  existing CSV/Layout TXT/Tabular CSV switches. When enabled, writes a `*.md` file per
+  document (`evaluate.write_markdown()`) using LiteParse's native Markdown rendering
+  (headings, lists, tables reconstructed per page), downloadable via a new "Download
+  Markdown" button on each result card. Required bumping the shared
+  `OCHLDocumentParsingLibrary`'s `LiteParseBackend` to request `output_format="markdown"`
+  from LiteParse (see that project's changelog) so `ParseResult.markdown` is populated.
+
 ---
 
 ## [0.2.0] — 2026-06-02

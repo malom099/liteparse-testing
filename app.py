@@ -18,6 +18,7 @@ import json
 import time
 from pathlib import Path
 
+from liteparse import LiteParse
 from nicegui import app, run, ui
 from ochl_document_parsing.backends.factory import get_backend
 
@@ -28,6 +29,7 @@ from evaluate import (
     evaluate_text_quality,
     write_items_csv,
     write_layout_txt,
+    write_markdown,
     write_tabular_csv,
 )
 from quality_check import (
@@ -75,6 +77,26 @@ SUPPORTED_EXTENSIONS = {
 # ---------------------------------------------------------------------------
 
 
+def check_complexity(path: Path) -> tuple[bool, list[str]]:
+    """Cheap text-layer-only pass (LiteParse.is_complex) — no full parse required.
+    Returns (needs_ocr, reasons) where reasons is the de-duplicated union of every
+    flagged page's reasons (e.g. "scanned", "no-text", "sparse-text", "garbled").
+    """
+    try:
+        pages = LiteParse().is_complex(str(path))
+    except Exception:
+        return False, []
+    needs_ocr = any(getattr(p, "needs_ocr", False) for p in pages)
+    seen: set[str] = set()
+    reasons: list[str] = []
+    for p in pages:
+        for reason in getattr(p, "reasons", None) or []:
+            if reason not in seen:
+                seen.add(reason)
+                reasons.append(reason)
+    return needs_ocr, reasons
+
+
 def _parse_and_evaluate(
     path: Path,
     ocr: bool,
@@ -83,13 +105,27 @@ def _parse_and_evaluate(
     csv_enabled: bool = True,
     txt_enabled: bool = False,
     tabular_enabled: bool = True,
+    markdown_enabled: bool = False,
     results_dir: Path | None = None,
-) -> tuple[DocumentReport, KeywordCheckReport | None, CoherenceReport, Path | None, Path | None, Path | None]:
+) -> tuple[
+    DocumentReport,
+    KeywordCheckReport | None,
+    CoherenceReport,
+    Path | None,
+    Path | None,
+    Path | None,
+    Path | None,
+    bool,
+    list[str],
+]:
     """
     Parse the document once and run all quality checks.
     Designed to be called via run.io_bound() so the UI stays responsive.
-    Returns (doc_report, kw_report, co_report, csv_path_or_None, txt_path_or_None, tabular_csv_path_or_None).
+    Returns (doc_report, kw_report, co_report, csv_path_or_None, txt_path_or_None, tabular_csv_path_or_None,
+    markdown_path_or_None, needs_ocr, ocr_reasons).
     """
+    needs_ocr, ocr_reasons = check_complexity(path)
+
     parser = get_backend("liteparse", ocr_enabled=ocr, dpi=dpi, quiet=True)
     t0 = time.perf_counter()
     try:
@@ -114,6 +150,9 @@ def _parse_and_evaluate(
             None,
             None,
             None,
+            None,
+            needs_ocr,
+            ocr_reasons,
         )
 
     elapsed = round(time.perf_counter() - t0, 3)
@@ -143,7 +182,12 @@ def _parse_and_evaluate(
         tabular_out = results_dir / (path.stem + "_tabular.csv")
         write_tabular_csv(result, tabular_out)
 
-    return doc_report, kw_report, co_report, csv_out, txt_out, tabular_out
+    markdown_out: Path | None = None
+    if markdown_enabled and results_dir is not None:
+        markdown_out = results_dir / (path.stem + ".md")
+        write_markdown(result, markdown_out)
+
+    return doc_report, kw_report, co_report, csv_out, txt_out, tabular_out, markdown_out, needs_ocr, ocr_reasons
 
 
 # ---------------------------------------------------------------------------
@@ -254,11 +298,19 @@ def page() -> None:
                     )
                     tabular_switch = (
                         ui.switch("Export Tabular CSV (Excel)", value=True)
-                        .classes("mt-2 mb-2")
+                        .classes("mt-2")
                         .tooltip(
                             "Save a *_tabular.csv file where rows and columns are clustered from bounding-box "
                             "positions — open directly in Excel to see the report reconstructed as a table "
                             "with partner rows, header columns, and numeric values aligned."
+                        )
+                    )
+                    markdown_switch = (
+                        ui.switch("Export Markdown", value=False)
+                        .classes("mt-2 mb-2")
+                        .tooltip(
+                            "Save a *.md file with LiteParse's native Markdown rendering of the document — "
+                            "headings, lists, and tables reconstructed per page."
                         )
                     )
 
@@ -381,6 +433,7 @@ def page() -> None:
         csv_enabled = bool(csv_switch.value)
         txt_enabled = bool(txt_switch.value)
         tabular_enabled = bool(tabular_switch.value)
+        markdown_enabled = bool(markdown_switch.value)
 
         run_btn.props("loading disable")
         spinner.set_visibility(True)
@@ -390,8 +443,27 @@ def page() -> None:
         all_results = []
         for path in paths:
             status_label.set_text(f"Parsing: {path.name} …")
-            doc_report, kw_report, co_report, csv_path, txt_path, tabular_path = await run.io_bound(  # pyright: ignore[reportGeneralTypeIssues]
-                _parse_and_evaluate, path, ocr, dpi, keywords, csv_enabled, txt_enabled, tabular_enabled, RESULTS_DIR
+            (
+                doc_report,
+                kw_report,
+                co_report,
+                csv_path,
+                txt_path,
+                tabular_path,
+                markdown_path,
+                needs_ocr,
+                ocr_reasons,
+            ) = await run.io_bound(  # pyright: ignore[reportGeneralTypeIssues]
+                _parse_and_evaluate,
+                path,
+                ocr,
+                dpi,
+                keywords,
+                csv_enabled,
+                txt_enabled,
+                tabular_enabled,
+                markdown_enabled,
+                RESULTS_DIR,
             )
             all_results.append((doc_report, kw_report, co_report))
 
@@ -400,7 +472,19 @@ def page() -> None:
             with out.open("w", encoding="utf-8") as fh:
                 json.dump(document_report_dict(doc_report), fh, indent=2)
 
-            _render_result_card(results_col, doc_report, kw_report, co_report, csv_path, txt_path, tabular_path)
+            _render_result_card(
+                results_col,
+                doc_report,
+                kw_report,
+                co_report,
+                csv_path,
+                txt_path,
+                tabular_path,
+                markdown_path,
+                ocr,
+                needs_ocr,
+                ocr_reasons,
+            )
 
         ok = sum(1 for r, _, __ in all_results if not r.error)
         extra_notes = []
@@ -410,6 +494,8 @@ def page() -> None:
             extra_notes.append("Layout TXT")
         if tabular_enabled:
             extra_notes.append("Tabular CSV")
+        if markdown_enabled:
+            extra_notes.append("Markdown")
         exports_note = ("  · " + " & ".join(extra_notes) + " saved to results/") if extra_notes else ""
         status_label.set_text(
             f"Done — {ok} / {len(paths)} document(s) parsed OK.  JSON reports saved to results/{exports_note}"
@@ -431,6 +517,10 @@ def page() -> None:
         csv_path: Path | None = None,
         txt_path: Path | None = None,
         tabular_path: Path | None = None,
+        markdown_path: Path | None = None,
+        ocr_enabled: bool = True,
+        needs_ocr: bool = False,
+        ocr_reasons: list[str] | None = None,
     ) -> None:
         icon = "error" if doc.error else "check_circle"
         subtitle_color = "text-red-500" if doc.error else "text-green-600"
@@ -446,6 +536,15 @@ def page() -> None:
 
             if doc.error:
                 return
+
+            if not ocr_enabled and needs_ocr:
+                reasons_text = ", ".join(ocr_reasons) if ocr_reasons else "low-quality text layer"
+                with ui.row().classes("items-center gap-2 mb-3 p-2 bg-amber-50 border border-amber-200 rounded w-full"):
+                    ui.icon("warning").classes("text-amber-500")
+                    ui.label(
+                        f"OCR was off, but this document looks like it needs it ({reasons_text}). "
+                        "Consider re-running with OCR enabled."
+                    ).classes("text-xs text-amber-700 leading-snug")
 
             if csv_path is not None and csv_path.exists():
                 ui.button(
@@ -475,6 +574,16 @@ def page() -> None:
                 ).props("flat dense size=sm outline color=green").classes("mb-3").tooltip(
                     "Download the tabular CSV — open in Excel to see the report reconstructed "
                     "as a table with rows and columns matching the original document layout."
+                )
+
+            if markdown_path is not None and markdown_path.exists():
+                ui.button(
+                    "Download Markdown",
+                    icon="article",
+                    on_click=lambda p=markdown_path: ui.download(p.read_bytes(), filename=p.name),  # pyright: ignore[reportAttributeAccessIssue]
+                ).props("flat dense size=sm outline color=purple").classes("mb-3").tooltip(
+                    "Download LiteParse's native Markdown rendering of the document — "
+                    "headings, lists, and tables reconstructed per page."
                 )
 
             with ui.tabs().classes("w-full") as tabs:
